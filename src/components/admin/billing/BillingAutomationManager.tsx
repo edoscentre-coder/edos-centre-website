@@ -16,10 +16,12 @@ import {
   sendDraftInvoice,
   sendTestBillingEmail,
   setSubscriptionAutoInvoice,
+  type ActionResult,
 } from "@/lib/admin/actions/billing-automation-actions";
 import type { BillingSettings } from "@/lib/admin/billing-settings";
 import type { RenewalCandidate } from "@/lib/admin/renewal-invoices";
 import type { InvoiceEmailKind } from "@/lib/admin/invoice-email";
+import { InvoiceViewer } from "@/components/admin/billing/InvoiceViewer";
 import type { InvoiceLite, LogRow, RecentInvoice, SubscriptionLite } from "@/app/admin/(dashboard)/billing-automation/page";
 
 const money = (currency: string, n: number) =>
@@ -63,7 +65,7 @@ export default function BillingAutomationManager({
   log,
   recentInvoices,
 }: {
-  settings: BillingSettings & { migrated: boolean };
+  settings: BillingSettings & { migrated: boolean; vatReady: boolean };
   cronConfigured: boolean;
   emailConfigured: boolean;
   renewals: RenewalCandidate[];
@@ -79,14 +81,19 @@ export default function BillingAutomationManager({
   const [busy, setBusy] = useState<string | null>(null);
   const [testInvoice, setTestInvoice] = useState(recentInvoices[0]?.id ?? "");
   const [testKind, setTestKind] = useState<InvoiceEmailKind>("new_invoice");
+  const [viewing, setViewing] = useState<{ id: string; number: string } | null>(null);
 
-  const run = (key: string, fn: () => Promise<unknown>, ok: (r: unknown) => string) => {
+  const run = <T,>(key: string, fn: () => Promise<ActionResult<T>>, ok: (r: T) => string) => {
     setBusy(key);
     start(async () => {
       try {
         const r = await fn();
-        toast.success(ok(r));
-        router.refresh();
+        if (r.ok) {
+          toast.success(ok(r.data));
+          router.refresh();
+        } else {
+          toast.error(r.error);
+        }
       } catch (err) {
         toast.error(errorText(err));
       } finally {
@@ -119,10 +126,9 @@ export default function BillingAutomationManager({
           loading={busy === "run"}
           disabled={pending}
           onClick={() =>
-            run("run", runBillingSweepNow, (r) => {
-              const x = r as { renewalInvoicesCreated: number; remindersSent: number; invoicesUpdated: number };
-              return `Done — ${x.renewalInvoicesCreated} renewal invoice(s), ${x.remindersSent} email(s), ${x.invoicesUpdated} invoice(s) marked overdue.`;
-            })
+            run("run", runBillingSweepNow, (x) =>
+              `Done — ${x.renewalInvoicesCreated} renewal invoice(s), ${x.remindersSent} email(s), ${x.invoicesUpdated} invoice(s) marked overdue.`,
+            )
           }
         >
           <Play className="h-4 w-4" /> Run today&apos;s check now
@@ -166,7 +172,10 @@ export default function BillingAutomationManager({
                         </div>
                       </td>
                       <td className="py-2 pr-3 text-slate-600">Renews {date(r.renewalDate)}</td>
-                      <td className="py-2 pr-3 text-right font-medium">{money(r.currency, r.amount)}</td>
+                      <td className="py-2 pr-3 text-right font-medium">
+                        {money(r.currency, r.total)}
+                        {r.tax > 0 && <div className="text-xs font-normal text-slate-500">incl. VAT {money(r.currency, r.tax)}</div>}
+                      </td>
                       <td className="py-2 text-right text-xs">
                         {r.skip ? <span className="text-slate-500">{r.skip}</span> : <span className="font-medium text-emerald-700">Will invoice</span>}
                       </td>
@@ -222,9 +231,13 @@ export default function BillingAutomationManager({
                     <td className="py-2 pr-3 text-right font-medium">{money(d.currency, d.total)}</td>
                     <td className="py-2 text-right">
                       <div className="flex justify-end gap-2">
-                        <a href={`/admin/invoices/${d.id}/print`} target="_blank" className="text-xs font-medium text-slate-600 hover:underline">
+                        <button
+                          type="button"
+                          onClick={() => setViewing({ id: d.id, number: d.invoice_number })}
+                          className="text-xs font-medium text-slate-600 hover:underline"
+                        >
                           View
-                        </a>
+                        </button>
                         <Button
                           size="sm"
                           loading={busy === `draft:${d.id}`}
@@ -273,6 +286,36 @@ export default function BillingAutomationManager({
                     The invoice is due on the renewal date. Due-soon reminders (3 days before) and overdue notices go out as they do today.
                   </p>
                 </div>
+              </div>
+
+              <div>
+                <h3 className="text-sm font-semibold text-slate-700">VAT</h3>
+                {settings.vatReady ? (
+                  <div className="mt-3 grid gap-4 md:grid-cols-2">
+                    <div className="space-y-3">
+                      <Checkbox id="vat_enabled" name="vat_enabled" defaultChecked={settings.vat_enabled} label="Charge VAT on renewal invoices" />
+                      <Checkbox
+                        id="prices_include_vat"
+                        name="prices_include_vat"
+                        defaultChecked={settings.prices_include_vat}
+                        label="Subscription prices already include VAT"
+                      />
+                      <p className="text-xs text-slate-500">
+                        Unticked, VAT is added on top: KES 5,000 becomes 5,000 + {(5000 * Number(settings.vat_rate)) / 100} VAT. Ticked, KES 5,000 is
+                        the total with VAT inside it. Manual invoices have their own “Add VAT” box, ticked by default while this is on.
+                      </p>
+                    </div>
+                    <div>
+                      <Label htmlFor="vat_rate">VAT rate (%)</Label>
+                      <Input id="vat_rate" name="vat_rate" type="number" step="0.01" min={0} max={100} defaultValue={settings.vat_rate} />
+                      <p className="mt-1 text-xs text-slate-500">Kenya&apos;s standard rate is 16%. Invoices show it as “VAT (16%)” with the KRA PIN.</p>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="mt-1 text-xs text-amber-800">
+                    Run <code className="font-mono">supabase/migrations/027_billing_vat.sql</code> to turn VAT on. Until then invoices carry no VAT unless typed by hand.
+                  </p>
+                )}
               </div>
 
               <div>
@@ -338,7 +381,7 @@ export default function BillingAutomationManager({
             variant="secondary"
             loading={busy === "test"}
             disabled={pending || !testInvoice}
-            onClick={() => run("test", () => sendTestBillingEmail(testInvoice, testKind), (to) => `Test sent to ${to as string}.`)}
+            onClick={() => run("test", () => sendTestBillingEmail(testInvoice, testKind), (to) => `Test sent to ${to}.`)}
           >
             <Mail className="h-4 w-4" /> Send test to me
           </Button>
@@ -403,10 +446,9 @@ export default function BillingAutomationManager({
                         loading={busy === `now:${s.id}`}
                         disabled={pending || !settings.migrated || !s.renewal_date}
                         onClick={() =>
-                          run(`now:${s.id}`, () => createRenewalInvoiceNow(s.id), (r) => {
-                            const x = r as { invoiceNumber: string; status: string; emailed: boolean };
-                            return `${x.invoiceNumber} created${x.status === "draft" ? " as a draft" : x.emailed ? " and emailed" : ""}.`;
-                          })
+                          run(`now:${s.id}`, () => createRenewalInvoiceNow(s.id), (x) =>
+                            `${x.invoiceNumber} created${x.status === "draft" ? " as a draft" : x.emailed ? " and emailed" : ""}.`,
+                          )
                         }
                       >
                         Invoice now
@@ -456,6 +498,7 @@ export default function BillingAutomationManager({
           )}
         </CardBody>
       </Card>
+      <InvoiceViewer invoiceId={viewing?.id ?? null} invoiceNumber={viewing?.number} onClose={() => setViewing(null)} />
     </div>
   );
 }

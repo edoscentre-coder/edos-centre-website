@@ -1,5 +1,6 @@
 import type { InvoiceForDocument } from "@/lib/admin/queries";
 import { formatDate } from "@/lib/utils";
+import { vatLabel } from "@/lib/admin/vat";
 
 const STATUS_LABELS: Record<string, string> = {
   draft: "Draft",
@@ -18,9 +19,12 @@ function money(n: number, currency: string) {
 export default function InvoiceDocument({
   invoice,
   settings,
+  kraPin,
 }: {
   invoice: InvoiceForDocument;
   settings: Record<string, string>;
+  /** Printed under the seller once VAT is charged — KRA expects it on a tax invoice. */
+  kraPin?: string | null;
 }) {
   const client = invoice.edoscentreadmin_clients;
   const isPaid = invoice.status === "paid";
@@ -48,6 +52,7 @@ export default function InvoiceDocument({
             {settings.contact_location && <div>{settings.contact_location}</div>}
             {settings.contact_email && <div>{settings.contact_email}</div>}
             {settings.contact_phone && <div>{settings.contact_phone}</div>}
+            {kraPin && <div>KRA PIN {kraPin}</div>}
           </div>
         </div>
         <div>
@@ -104,7 +109,7 @@ export default function InvoiceDocument({
           </tr>
           {invoice.tax > 0 && (
             <tr>
-              <td className="py-3 text-slate-500">Tax</td>
+              <td className="py-3 text-slate-500">{vatLabel(Number(invoice.amount), Number(invoice.tax))}</td>
               <td className="py-3 text-right text-slate-500">{money(invoice.tax, invoice.currency)}</td>
             </tr>
           )}

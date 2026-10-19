@@ -1,6 +1,7 @@
 import "server-only";
 import { jsPDF } from "jspdf";
 import { EDOS_MARK_PNG } from "@/lib/admin/edos-mark";
+import { vatLabel } from "@/lib/admin/vat";
 
 /**
  * The invoice as a PDF, attached to the client's email.
@@ -82,7 +83,7 @@ export function renderInvoicePdf(d: InvoicePdfData): Uint8Array {
   doc.text(t(d.number), R, 82, { align: "right" });
   doc.setTextColor(...soft);
   doc.text(t(`Issued ${d.issueDate}`), R, 96, { align: "right" });
-  doc.text(t(d.status === "paid" && d.paidOn ? `Paid ${d.paidOn}` : `Due ${d.dueDate}`), R, 110, { align: "right" });
+  doc.text(t(d.status === "paid" ? (d.paidOn ? `Paid ${d.paidOn}` : "Paid") : `Due ${d.dueDate}`), R, 110, { align: "right" });
 
   // Billed to
   const top = Math.max(150, 80 + d.sellerLines.length * 12 + 36);
@@ -111,7 +112,10 @@ export function renderInvoicePdf(d: InvoicePdfData): Uint8Array {
   // Totals
   const balance = Math.max(0, d.total - d.paid);
   const rows: [string, string, boolean][] = [];
-  if (d.tax > 0) rows.push(["Tax", money(d.currency, d.tax), false]);
+  if (d.tax > 0) {
+    rows.push(["Subtotal", money(d.currency, d.amount), false]);
+    rows.push([vatLabel(d.amount, d.tax), money(d.currency, d.tax), false]);
+  }
   if (d.discount > 0) rows.push(["Discount", `-${money(d.currency, d.discount)}`, false]);
   rows.push(["Total", money(d.currency, d.total), true]);
   if (d.paid > 0) rows.push(["Paid", money(d.currency, d.paid), false]);

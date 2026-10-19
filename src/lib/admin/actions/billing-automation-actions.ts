@@ -18,6 +18,24 @@ import { createRenewalInvoice, findRenewals } from "@/lib/admin/renewal-invoices
 
 const PAGE = "/admin/billing-automation";
 
+/**
+ * What each action returns. Errors come back as a value rather than being
+ * thrown: a production build replaces a thrown server-action error with a
+ * generic "An error occurred in the Server Components render", which is what
+ * "Invoice now" showed instead of "Already invoiced — INV-…".
+ */
+export type ActionResult<T = undefined> = { ok: true; data: T } | { ok: false; error: string };
+
+async function attempt<T>(fn: () => Promise<T>): Promise<ActionResult<T>> {
+  try {
+    return { ok: true, data: await fn() };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Something went wrong.";
+    return { ok: false, error: message === "UNAUTHORIZED" ? "Your session has ended — sign in again." : message };
+  }
+}
+
+
 const text = (max: number) =>
   z
     .string()
@@ -40,6 +58,8 @@ const settingsSchema = z.object({
   bcc_email: z.union([z.literal(""), z.email("Copy-to must be an email address.")]).transform((v) => v || null),
 });
 
+const vatRateSchema = z.coerce.number().min(0, "VAT cannot be negative.").max(100, "VAT is a percentage, at most 100.");
+
 async function requireMigrated() {
   const settings = await getBillingSettings();
   if (!settings.migrated) {
@@ -48,7 +68,7 @@ async function requireMigrated() {
   return settings;
 }
 
-export async function saveBillingSettings(formData: FormData) {
+async function saveBillingSettingsImpl(formData: FormData) {
   const admin = await requireAdmin("edos-centre");
   const before = await requireMigrated();
   const fields = settingsSchema.parse(Object.fromEntries(formData));
@@ -58,6 +78,14 @@ export async function saveBillingSettings(formData: FormData) {
     renewal_invoices: formBool(formData, "renewal_invoices"),
     auto_send_invoices: formBool(formData, "auto_send_invoices"),
     attach_pdf: formBool(formData, "attach_pdf"),
+    // VAT columns arrive with migration 027; until then they are left out.
+    ...(before.vatReady
+      ? {
+          vat_enabled: formBool(formData, "vat_enabled"),
+          vat_rate: vatRateSchema.parse(formData.get("vat_rate") ?? 16),
+          prices_include_vat: formBool(formData, "prices_include_vat"),
+        }
+      : {}),
     updated_at: new Date().toISOString(),
     updated_by: admin.id,
   };
@@ -73,13 +101,14 @@ export async function saveBillingSettings(formData: FormData) {
       automation_enabled: { from: before.automation_enabled, to: patch.automation_enabled },
       auto_send_invoices: { from: before.auto_send_invoices, to: patch.auto_send_invoices },
       renewal_days_before: patch.renewal_days_before,
+      ...(before.vatReady ? { vat_enabled: { from: before.vat_enabled, to: patch.vat_enabled }, vat_rate: patch.vat_rate } : {}),
     },
   });
   revalidatePath(PAGE);
 }
 
 /** The whole daily sweep, now — the same thing the cron runs. */
-export async function runBillingSweepNow() {
+async function runBillingSweepNowImpl() {
   const admin = await requireAdmin("edos-centre");
   const result = await runAutomationSweep();
   await logAudit({ actorId: admin.id, action: "billing_sweep_run_manually", metadata: result });
@@ -92,7 +121,7 @@ export async function runBillingSweepNow() {
 const KINDS: InvoiceEmailKind[] = ["new_invoice", "reminder_due_soon", "reminder_overdue", "payment_received"];
 
 /** A real invoice's email, sent to the admin instead of the client. */
-export async function sendTestBillingEmail(invoiceId: string, kind: InvoiceEmailKind) {
+async function sendTestBillingEmailImpl(invoiceId: string, kind: InvoiceEmailKind) {
   const admin = await requireAdmin("edos-centre");
   if (!KINDS.includes(kind)) throw new Error("Unknown email type.");
   await sendInvoiceStatusEmail(invoiceId, kind, { throwOnSkip: true, testTo: admin.email });
@@ -101,7 +130,7 @@ export async function sendTestBillingEmail(invoiceId: string, kind: InvoiceEmail
 }
 
 /** A draft renewal invoice, checked by the admin: marked sent and emailed. */
-export async function sendDraftInvoice(invoiceId: string) {
+async function sendDraftInvoiceImpl(invoiceId: string) {
   const admin = await requireAdmin("edos-centre");
   const supabase = await createServiceClient();
   const { data: invoice, error } = await supabase
@@ -123,7 +152,7 @@ export async function sendDraftInvoice(invoiceId: string) {
 }
 
 /** "Invoice now" for one subscription, outside the daily window. */
-export async function createRenewalInvoiceNow(subscriptionId: string) {
+async function createRenewalInvoiceNowImpl(subscriptionId: string) {
   const admin = await requireAdmin("edos-centre");
   const settings = await requireMigrated();
   const [candidate] = await findRenewals(settings, new Date(), subscriptionId);
@@ -138,7 +167,7 @@ export async function createRenewalInvoiceNow(subscriptionId: string) {
 }
 
 /** Per-subscription opt-out from automatic invoices. */
-export async function setSubscriptionAutoInvoice(subscriptionId: string, on: boolean) {
+async function setSubscriptionAutoInvoiceImpl(subscriptionId: string, on: boolean) {
   const admin = await requireAdmin("edos-centre");
   await requireMigrated();
   const supabase = await createServiceClient();
@@ -146,4 +175,30 @@ export async function setSubscriptionAutoInvoice(subscriptionId: string, on: boo
   if (error) throw new Error(error.message);
   await logAudit({ actorId: admin.id, action: "subscription_auto_invoice_set", metadata: { subscription_id: subscriptionId, on } });
   revalidatePath(PAGE);
+}
+
+// ── The actions, as the page calls them ──────────────────────────────────────
+
+export async function saveBillingSettings(formData: FormData) {
+  return attempt(() => saveBillingSettingsImpl(formData));
+}
+
+export async function runBillingSweepNow() {
+  return attempt(() => runBillingSweepNowImpl());
+}
+
+export async function sendTestBillingEmail(invoiceId: string, kind: InvoiceEmailKind) {
+  return attempt(() => sendTestBillingEmailImpl(invoiceId, kind));
+}
+
+export async function sendDraftInvoice(invoiceId: string) {
+  return attempt(() => sendDraftInvoiceImpl(invoiceId));
+}
+
+export async function createRenewalInvoiceNow(subscriptionId: string) {
+  return attempt(() => createRenewalInvoiceNowImpl(subscriptionId));
+}
+
+export async function setSubscriptionAutoInvoice(subscriptionId: string, on: boolean) {
+  return attempt(() => setSubscriptionAutoInvoiceImpl(subscriptionId, on));
 }

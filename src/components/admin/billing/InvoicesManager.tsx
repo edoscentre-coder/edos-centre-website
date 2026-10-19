@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { toast } from "sonner";
 import { Wallet, Smartphone, RefreshCw, FileText, Mail } from "lucide-react";
 import EntityManager from "@/components/admin/cms/EntityManager";
@@ -15,6 +14,8 @@ import { upsertInvoice, deleteInvoice, recordPayment } from "@/lib/admin/actions
 import { initiateMpesaPayment, checkMpesaTransactionStatus } from "@/lib/admin/actions/mpesa-actions";
 import { sendInvoiceEmail } from "@/lib/admin/actions/invoice-email-actions";
 import { formatDate } from "@/lib/utils";
+import { vatSplit } from "@/lib/admin/vat";
+import { InvoiceViewer } from "@/components/admin/billing/InvoiceViewer";
 import type { Database } from "@/types/database.types";
 import type { InvoiceWithRelations, PaymentWithRelations } from "@/lib/admin/queries";
 
@@ -33,6 +34,7 @@ export default function InvoicesManager({
   websites,
   subscriptions,
   mpesaTransactions,
+  vat = { enabled: false, rate: 16 },
 }: {
   invoices: InvoiceWithRelations[];
   payments: PaymentWithRelations[];
@@ -40,6 +42,8 @@ export default function InvoicesManager({
   websites: Website[];
   subscriptions: Subscription[];
   mpesaTransactions: MpesaTransaction[];
+  /** From Billing automation: whether "Add VAT" starts ticked on a new invoice, and at what rate. */
+  vat?: { enabled: boolean; rate: number };
 }) {
   const router = useRouter();
   const [paymentInvoice, setPaymentInvoice] = useState<InvoiceWithRelations | null>(null);
@@ -47,6 +51,7 @@ export default function InvoicesManager({
   const [pending, setPending] = useState(false);
   const [checkingId, setCheckingId] = useState<string | null>(null);
   const [emailingId, setEmailingId] = useState<string | null>(null);
+  const [viewing, setViewing] = useState<{ id: string; number: string } | null>(null);
 
   async function onEmailInvoice(invoiceId: string) {
     setEmailingId(invoiceId);
@@ -109,7 +114,7 @@ export default function InvoicesManager({
     <div className="space-y-10">
       <div>
         <h1 className="text-2xl font-semibold text-slate-900">Invoices &amp; Payments</h1>
-        <p className="mt-1 text-sm text-slate-500">Bill clients and record what's actually been paid.</p>
+        <p className="mt-1 text-sm text-slate-500">Bill clients and record what&apos;s actually been paid.</p>
       </div>
 
       <EntityManager<InvoiceWithRelations>
@@ -130,14 +135,16 @@ export default function InvoicesManager({
             header: "",
             render: (i) => (
               <div className="flex justify-end gap-1.5">
-                <Link
-                  href={`/admin/invoices/${i.id}/print`}
-                  target="_blank"
-                  onClick={(e) => e.stopPropagation()}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setViewing({ id: i.id, number: i.invoice_number });
+                  }}
                   className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
                 >
                   <FileText className="h-3.5 w-3.5" /> View / PDF
-                </Link>
+                </button>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -223,20 +230,7 @@ export default function InvoicesManager({
                 <Input id="due_date" name="due_date" type="date" required defaultValue={editing?.due_date ?? ""} />
               </div>
             </div>
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <Label htmlFor="amount">Amount</Label>
-                <Input id="amount" name="amount" type="number" step="0.01" required defaultValue={editing?.amount ?? ""} />
-              </div>
-              <div>
-                <Label htmlFor="tax">Tax</Label>
-                <Input id="tax" name="tax" type="number" step="0.01" defaultValue={editing?.tax ?? 0} />
-              </div>
-              <div>
-                <Label htmlFor="discount">Discount</Label>
-                <Input id="discount" name="discount" type="number" step="0.01" defaultValue={editing?.discount ?? 0} />
-              </div>
-            </div>
+            <AmountFields key={editing?.id ?? "new"} editing={editing} vat={vat} />
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label htmlFor="currency">Currency</Label>
@@ -433,6 +427,68 @@ export default function InvoicesManager({
           </form>
         )}
       </Drawer>
+      <InvoiceViewer invoiceId={viewing?.id ?? null} invoiceNumber={viewing?.number} onClose={() => setViewing(null)} />
+    </div>
+  );
+}
+
+/**
+ * Amount, VAT and discount. "Add VAT" fills the tax in from the amount at the
+ * rate set under Billing automation and shows the total as it will be saved;
+ * unticked, the tax field is typed by hand as before. The server works the
+ * VAT out again itself when the box is ticked.
+ */
+function AmountFields({ editing, vat }: { editing: InvoiceWithRelations | null; vat: { enabled: boolean; rate: number } }) {
+  const [amount, setAmount] = useState(editing ? String(editing.amount) : "");
+  const [discount, setDiscount] = useState(editing ? String(editing.discount) : "0");
+  const editingVat = editing ? Number(editing.tax) > 0 && Math.abs(vatSplit(Number(editing.amount), vat.rate, false).tax - Number(editing.tax)) < 0.01 : vat.enabled;
+  const [applyVat, setApplyVat] = useState(editingVat);
+  const [typedTax, setTypedTax] = useState(editing ? String(editing.tax) : "0");
+
+  const n = (v: string) => Number(v) || 0;
+  const tax = applyVat ? vatSplit(n(amount), vat.rate, false).tax : n(typedTax);
+  const total = n(amount) + tax - n(discount);
+
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-3 gap-3">
+        <div>
+          <Label htmlFor="amount">Amount{applyVat ? " (before VAT)" : ""}</Label>
+          <Input id="amount" name="amount" type="number" step="0.01" required value={amount} onChange={(e) => setAmount(e.target.value)} />
+        </div>
+        <div>
+          <Label htmlFor="tax">{applyVat ? `VAT (${vat.rate}%)` : "Tax"}</Label>
+          <Input
+            id="tax"
+            name="tax"
+            type="number"
+            step="0.01"
+            value={applyVat ? String(tax) : typedTax}
+            readOnly={applyVat}
+            onChange={(e) => setTypedTax(e.target.value)}
+            className={applyVat ? "bg-slate-50 text-slate-500" : undefined}
+          />
+        </div>
+        <div>
+          <Label htmlFor="discount">Discount</Label>
+          <Input id="discount" name="discount" type="number" step="0.01" value={discount} onChange={(e) => setDiscount(e.target.value)} />
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+        <label className="flex items-center gap-2 text-slate-700">
+          <input
+            type="checkbox"
+            name="apply_vat"
+            checked={applyVat}
+            onChange={(e) => setApplyVat(e.target.checked)}
+            className="h-4 w-4 rounded border-slate-300 text-[#1A1733] focus:ring-[#1A1733]/30"
+          />
+          Add VAT at {vat.rate}%
+        </label>
+        <span className="text-slate-500">
+          Total <span className="font-semibold text-slate-900">{total.toLocaleString("en-KE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+        </span>
+      </div>
     </div>
   );
 }

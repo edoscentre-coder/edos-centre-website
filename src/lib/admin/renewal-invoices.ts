@@ -4,6 +4,7 @@ import { logAudit } from "@/lib/admin/audit";
 import { sendInvoiceStatusEmail } from "@/lib/admin/invoice-email";
 import type { BillingSettings } from "@/lib/admin/billing-settings";
 import { formatDate } from "@/lib/utils";
+import { vatSplit } from "@/lib/admin/vat";
 
 /**
  * Renewal invoices: the next period's invoice for a subscription, made a set
@@ -35,7 +36,12 @@ export interface RenewalCandidate {
   client: string;
   clientEmail: string | null;
   plan: string | null;
+  /** The subscription's price, as entered on the subscription. */
   amount: number;
+  /** What the invoice will carry: before VAT, the VAT, and the total. */
+  net: number;
+  tax: number;
+  total: number;
   currency: string;
   renewalDate: string;
   periodEnd: string;
@@ -70,7 +76,13 @@ function periodEnd(start: string, cycle: string): string {
 }
 
 /** Subscriptions whose renewal falls inside the window, each with what would happen to it. */
-export async function findRenewals(settings: BillingSettings, today = new Date(), onlySubscriptionId?: string): Promise<RenewalCandidate[]> {
+export async function findRenewals(
+  settings: BillingSettings & { vatReady?: boolean },
+  today = new Date(),
+  onlySubscriptionId?: string,
+): Promise<RenewalCandidate[]> {
+  // VAT only once migration 027 is in and the switch is on.
+  const vatOn = Boolean(settings.vatReady && settings.vat_enabled);
   const supabase = await createServiceClient();
   const horizon = iso(new Date(today.getTime() + settings.renewal_days_before * DAY));
   const earliest = iso(new Date(today.getTime() - LATE_LIMIT_DAYS * DAY));
@@ -96,17 +108,27 @@ export async function findRenewals(settings: BillingSettings, today = new Date()
     .neq("status", "cancelled");
 
   return rows.map((s) => {
-    const website = s.edoscentreadmin_websites?.name ?? "Website";
+    const website = (s.edoscentreadmin_websites?.name ?? "Website").trim();
     const end = periodEnd(s.renewal_date, s.billing_cycle);
-    const plan = s.edoscentreadmin_subscription_plans?.name ?? null;
-    const line = `${website} — ${plan ? `${plan} plan` : "website subscription"}, ${formatDate(s.renewal_date)} to ${formatDate(end)}`;
+    const plan = s.edoscentreadmin_subscription_plans?.name?.trim() || null;
+    // "Premium Plan", not "Premium Plan plan".
+    const planText = plan ? (/(^|\s)plan$/i.test(plan) ? plan : `${plan} plan`) : "website subscription";
+    const line = `${website} — ${planText}, ${formatDate(s.renewal_date)} to ${formatDate(end)}`;
 
+    // An invoice already covers this period when it was made for it (the
+    // renewal_period_start this code stores), or when an admin raised one by
+    // hand around this renewal date and it is still open. A manual invoice
+    // that is already paid and was due before the renewal date paid the
+    // period before — paying it is what moved the renewal date on — so it
+    // does not stop the next one; one paid and due on or after the renewal
+    // date was paid in advance for this period, so it does.
     const matchFrom = iso(new Date(new Date(`${s.renewal_date}T00:00:00Z`).getTime() - MANUAL_MATCH_DAYS * DAY));
-    const covering = (invoices ?? []).find(
-      (i) =>
-        i.subscription_id === s.id &&
-        (i.renewal_period_start === s.renewal_date || (!i.renewal_period_start && i.due_date >= matchFrom)),
-    );
+    const covering = (invoices ?? []).find((i) => {
+      if (i.subscription_id !== s.id) return false;
+      if (i.renewal_period_start) return i.renewal_period_start === s.renewal_date;
+      if (i.due_date < matchFrom) return false;
+      return i.status === "paid" ? i.due_date >= s.renewal_date : true;
+    });
 
     let skip: string | null = null;
     if (covering) skip = `Already invoiced — ${covering.invoice_number}`;
@@ -114,15 +136,22 @@ export async function findRenewals(settings: BillingSettings, today = new Date()
     else if (s.auto_invoice === false) skip = "Automatic invoices are off for this subscription";
     else if (!(Number(s.amount) > 0)) skip = "Subscription amount is zero";
 
+    const { amount: net, tax } = vatOn
+      ? vatSplit(Number(s.amount), Number(settings.vat_rate), settings.prices_include_vat)
+      : { amount: Number(s.amount), tax: 0 };
+
     return {
       subscriptionId: s.id,
       websiteId: s.website_id,
       clientId: s.client_id,
       website,
-      client: s.edoscentreadmin_clients?.company_name ?? "Client",
+      client: (s.edoscentreadmin_clients?.company_name ?? "Client").trim(),
       clientEmail: s.edoscentreadmin_clients?.email ?? null,
       plan,
       amount: Number(s.amount),
+      net,
+      tax,
+      total: Math.round((net + tax) * 100) / 100,
       currency: s.currency,
       renewalDate: s.renewal_date,
       periodEnd: end,
@@ -165,10 +194,10 @@ export async function createRenewalInvoice(
       subscription_id: c.subscriptionId,
       issue_date: today,
       due_date: c.renewalDate < today ? today : c.renewalDate,
-      amount: c.amount,
-      tax: 0,
+      amount: c.net,
+      tax: c.tax,
       discount: 0,
-      total: c.amount,
+      total: c.total,
       currency: c.currency,
       status,
       notes: c.line,
@@ -214,7 +243,7 @@ export async function createRenewalInvoice(
 }
 
 /** The sweep's step: every due candidate in the window, invoiced once. */
-export async function createDueRenewalInvoices(settings: BillingSettings): Promise<CreatedRenewal[]> {
+export async function createDueRenewalInvoices(settings: BillingSettings & { vatReady?: boolean }): Promise<CreatedRenewal[]> {
   const created: CreatedRenewal[] = [];
   for (const c of await findRenewals(settings)) {
     if (c.skip) continue;

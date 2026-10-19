@@ -7,6 +7,7 @@ import { formatDate } from "@/lib/utils";
 import { createServiceClient } from "@/lib/supabase/server";
 import { getBillingSettings, logBillingEmail, paymentLines, type BillingSettings } from "@/lib/admin/billing-settings";
 import { renderInvoicePdf } from "@/lib/admin/invoice-pdf";
+import { vatLabel } from "@/lib/admin/vat";
 
 /**
  * Client emails about an invoice: a new invoice, the due-soon and overdue
@@ -94,6 +95,10 @@ function compose(
   const rows: [string, string][] = [["Invoice", invoice.invoice_number]];
   if (website) rows.push(["Website", website]);
   if (invoice.notes) rows.push(["For", invoice.notes]);
+  if (Number(invoice.tax) > 0) {
+    rows.push(["Subtotal", money(invoice.amount, invoice.currency)]);
+    rows.push([vatLabel(Number(invoice.amount), Number(invoice.tax)), money(invoice.tax, invoice.currency)]);
+  }
   rows.push(["Total", total]);
   if (kind === "payment_received") {
     rows.push(["Paid on", formatDate(paidOn)]);
@@ -165,6 +170,72 @@ function text(m: Message, viewUrl: string, footer: string): string {
   ].join("\n");
 }
 
+type InvoiceContext = {
+  billing: Awaited<ReturnType<typeof getBillingSettings>>;
+  paid: number;
+  /** The latest payment's date; null when none is recorded (an invoice marked paid by hand). */
+  paidOn: string | null;
+  contact: { email: string; phone: string; location: string };
+  footer: string;
+};
+
+/** What the email and the PDF both need beyond the invoice row: settings, payments, EDOS's contacts. */
+async function invoiceContext(invoice: InvoiceForDocument, paidOnOverride?: string): Promise<InvoiceContext> {
+  const [site, billing, supabase] = await Promise.all([getSiteSettings(), getBillingSettings(), createServiceClient()]);
+  const { data: payments } = await supabase
+    .from("edoscentreadmin_payments")
+    .select("amount, payment_date")
+    .eq("invoice_id", invoice.id)
+    .eq("status", "completed")
+    .order("payment_date", { ascending: false });
+  const recorded = (payments ?? []).reduce((sum, p) => sum + Number(p.amount), 0);
+  // An invoice can be marked paid in the form without a payment being
+  // recorded against it; it is still paid, so it shows no balance.
+  const paid = invoice.status === "paid" ? Math.max(recorded, Number(invoice.total)) : recorded;
+  const paidOn = paidOnOverride ?? payments?.[0]?.payment_date ?? null;
+  const contact = {
+    email: site.contact_email || FALLBACK.email,
+    phone: site.contact_phone || FALLBACK.phone,
+    location: site.contact_location || FALLBACK.location,
+  };
+  return { billing, paid, paidOn, contact, footer: `EDOS Centre · ${contact.email} · ${contact.phone}` };
+}
+
+/** The invoice PDF — attached to emails, and shown in the admin's invoice window. */
+function pdfFromContext(invoice: InvoiceForDocument, ctx: InvoiceContext, markPaid = false): Uint8Array {
+  const { billing, paid, paidOn, contact, footer } = ctx;
+  const client = invoice.edoscentreadmin_clients;
+  const overdue = invoice.status === "overdue" || (invoice.status !== "paid" && invoice.due_date < new Date().toISOString().slice(0, 10));
+  return renderInvoicePdf({
+    number: invoice.invoice_number,
+    issueDate: formatDate(invoice.issue_date),
+    dueDate: formatDate(invoice.due_date),
+    status: invoice.status === "paid" || markPaid ? "paid" : overdue ? "overdue" : "due",
+    paidOn: paidOn ? formatDate(paidOn) : null,
+    sellerName: "EDOS Centre",
+    sellerLines: [contact.location, contact.phone, contact.email, billing.kra_pin ? `KRA PIN ${billing.kra_pin}` : ""].filter(Boolean),
+    buyerName: client?.company_name?.trim() || "—",
+    buyerLines: [client?.contact_person, client?.address, client?.email, client?.phone].filter((v): v is string => Boolean(v)),
+    line: invoice.notes || "Professional services",
+    detail: invoice.edoscentreadmin_websites?.name?.trim() ?? null,
+    currency: invoice.currency,
+    amount: Number(invoice.amount),
+    tax: Number(invoice.tax),
+    discount: Number(invoice.discount),
+    total: Number(invoice.total),
+    paid,
+    paymentLines: paymentLines(billing, invoice.invoice_number),
+    footer: `${footer}${billing.kra_pin ? ` · KRA PIN ${billing.kra_pin}` : ""}`,
+  });
+}
+
+/** One invoice's PDF by id, or null when there is no such invoice. */
+export async function buildInvoicePdf(invoiceId: string): Promise<{ bytes: Uint8Array; number: string } | null> {
+  const invoice = await getInvoiceForDocument(invoiceId);
+  if (!invoice) return null;
+  return { bytes: pdfFromContext(invoice, await invoiceContext(invoice)), number: invoice.invoice_number };
+}
+
 /** Subject, HTML and plain text for one email — pure, so it can be previewed and checked without sending. */
 export function invoiceEmailContent(args: {
   kind: InvoiceEmailKind;
@@ -215,28 +286,14 @@ export async function sendInvoiceStatusEmail(
   const to = opts.testTo ?? client?.email ?? null;
   if (!to) return skip(`${client?.company_name ?? "This client"} has no email on file.`, invoice.invoice_number, null);
 
-  const [site, billing, supabase] = await Promise.all([getSiteSettings(), getBillingSettings(), createServiceClient()]);
-  const { data: payments } = await supabase
-    .from("edoscentreadmin_payments")
-    .select("amount, payment_date")
-    .eq("invoice_id", invoice.id)
-    .eq("status", "completed")
-    .order("payment_date", { ascending: false });
-  const paid = (payments ?? []).reduce((sum, p) => sum + Number(p.amount), 0);
-  const paidOn = opts.paidOn ?? payments?.[0]?.payment_date ?? new Date().toISOString().slice(0, 10);
-
-  const contact = {
-    email: site.contact_email || FALLBACK.email,
-    phone: site.contact_phone || FALLBACK.phone,
-    location: site.contact_location || FALLBACK.location,
-  };
-  const footer = `EDOS Centre · ${contact.email} · ${contact.phone}`;
+  const ctx = await invoiceContext(invoice, opts.paidOn);
+  const { billing, paid, paidOn, footer } = ctx;
   const viewUrl = absoluteUrl(`/invoice/${invoice.id}`);
   const content = invoiceEmailContent({
     kind,
     invoice,
     paid,
-    paidOn,
+    paidOn: paidOn ?? new Date().toISOString().slice(0, 10),
     settings: billing,
     viewUrl,
     logoUrl: absoluteUrl("/EDOS-LOGOty-1.png"),
@@ -246,28 +303,7 @@ export async function sendInvoiceStatusEmail(
   const attachments: { filename: string; content: string }[] = [];
   if (billing.attach_pdf) {
     try {
-      const overdue = invoice.status === "overdue" || (invoice.status !== "paid" && invoice.due_date < new Date().toISOString().slice(0, 10));
-      const pdf = renderInvoicePdf({
-        number: invoice.invoice_number,
-        issueDate: formatDate(invoice.issue_date),
-        dueDate: formatDate(invoice.due_date),
-        status: invoice.status === "paid" || kind === "payment_received" ? "paid" : overdue ? "overdue" : "due",
-        paidOn: formatDate(paidOn),
-        sellerName: "EDOS Centre",
-        sellerLines: [contact.location, contact.phone, contact.email, billing.kra_pin ? `KRA PIN ${billing.kra_pin}` : ""].filter(Boolean),
-        buyerName: client?.company_name ?? "—",
-        buyerLines: [client?.contact_person, client?.address, client?.email, client?.phone].filter((v): v is string => Boolean(v)),
-        line: invoice.notes || "Professional services",
-        detail: invoice.edoscentreadmin_websites?.name ?? null,
-        currency: invoice.currency,
-        amount: Number(invoice.amount),
-        tax: Number(invoice.tax),
-        discount: Number(invoice.discount),
-        total: Number(invoice.total),
-        paid,
-        paymentLines: paymentLines(billing, invoice.invoice_number),
-        footer: `${footer}${billing.kra_pin ? ` · KRA PIN ${billing.kra_pin}` : ""}`,
-      });
+      const pdf = pdfFromContext(invoice, ctx, kind === "payment_received");
       attachments.push({ filename: `${invoice.invoice_number}.pdf`, content: Buffer.from(pdf).toString("base64") });
     } catch (err) {
       // The email still carries the link to the invoice; a PDF that failed to build must not stop it.

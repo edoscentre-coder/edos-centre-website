@@ -573,6 +573,7 @@ export interface Database {
           bank_name: string | null; bank_account: string | null; bank_holder: string | null;
           bank_branch: string | null; kra_pin: string | null; payment_note: string | null;
           reply_to_email: string | null; bcc_email: string | null; attach_pdf: boolean;
+          vat_enabled: boolean; vat_rate: number; prices_include_vat: boolean;
           updated_at: string; updated_by: string | null;
         };
         Insert: {
@@ -581,6 +582,7 @@ export interface Database {
           bank_name?: string | null; bank_account?: string | null; bank_holder?: string | null;
           bank_branch?: string | null; kra_pin?: string | null; payment_note?: string | null;
           reply_to_email?: string | null; bcc_email?: string | null; attach_pdf?: boolean;
+          vat_enabled?: boolean; vat_rate?: number; prices_include_vat?: boolean;
           updated_at?: string; updated_by?: string | null;
         };
         Update: {
@@ -589,6 +591,7 @@ export interface Database {
           bank_name?: string | null; bank_account?: string | null; bank_holder?: string | null;
           bank_branch?: string | null; kra_pin?: string | null; payment_note?: string | null;
           reply_to_email?: string | null; bcc_email?: string | null; attach_pdf?: boolean;
+          vat_enabled?: boolean; vat_rate?: number; prices_include_vat?: boolean;
           updated_at?: string; updated_by?: string | null;
         };
         Relationships: [];

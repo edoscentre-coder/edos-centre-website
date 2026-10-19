@@ -6,6 +6,8 @@ import { requireAdmin } from "@/lib/admin/auth";
 import { logAudit } from "@/lib/admin/audit";
 import { createServiceClient } from "@/lib/supabase/server";
 import { applyPaymentCascade } from "@/lib/admin/billing-cascade";
+import { getBillingSettings } from "@/lib/admin/billing-settings";
+import { vatSplit } from "@/lib/admin/vat";
 
 const invoiceSchema = z.object({
   client_id: z.string().min(1),
@@ -24,7 +26,14 @@ const invoiceSchema = z.object({
 export async function upsertInvoice(formData: FormData, id?: string) {
   const admin = await requireAdmin("edos-centre");
   const parsed = invoiceSchema.parse(Object.fromEntries(formData));
-  const total = parsed.amount + parsed.tax - parsed.discount;
+  // "Add VAT" ticked: VAT is worked out here from the amount at the rate set
+  // under Billing automation, not taken from the browser. Unticked, the tax
+  // field is whatever was typed — the form as it always was.
+  if (formData.get("apply_vat") === "on") {
+    const { vat_rate } = await getBillingSettings();
+    parsed.tax = vatSplit(parsed.amount, Number(vat_rate), false).tax;
+  }
+  const total = Math.round((parsed.amount + parsed.tax - parsed.discount) * 100) / 100;
 
   const supabase = await createServiceClient();
   const payload = {

@@ -29,16 +29,30 @@ export const DEFAULT_BILLING_SETTINGS: BillingSettings = {
   reply_to_email: "info@edoscentre.co.ke",
   bcc_email: null,
   attach_pdf: true,
+  vat_enabled: false,
+  vat_rate: 16,
+  prices_include_vat: false,
   updated_at: new Date(0).toISOString(),
   updated_by: null,
 };
 
-/** The settings row, or the defaults above when migration 026 has not been run — automation stays off either way. */
-export async function getBillingSettings(): Promise<BillingSettings & { migrated: boolean }> {
+/**
+ * The settings row, or the defaults above when migration 026 has not been run —
+ * automation stays off either way. `vatReady` says whether migration 027 has
+ * added the VAT columns; until it has, VAT stays off and is not saved.
+ */
+export async function getBillingSettings(): Promise<BillingSettings & { migrated: boolean; vatReady: boolean }> {
   const supabase = await createServiceClient();
   const { data, error } = await supabase.from("edoscentreadmin_billing_settings").select("*").eq("id", 1).maybeSingle();
-  if (error || !data) return { ...DEFAULT_BILLING_SETTINGS, migrated: false };
-  return { ...data, migrated: true };
+  if (error || !data) return { ...DEFAULT_BILLING_SETTINGS, migrated: false, vatReady: false };
+  const vatReady = "vat_enabled" in data;
+  return {
+    ...DEFAULT_BILLING_SETTINGS,
+    ...data,
+    vat_rate: Number(data.vat_rate ?? DEFAULT_BILLING_SETTINGS.vat_rate),
+    migrated: true,
+    vatReady,
+  };
 }
 
 /** Payment details as lines, for the email, the PDF and the plain-text part alike. */

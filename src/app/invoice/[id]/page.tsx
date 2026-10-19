@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getInvoiceForDocument } from "@/lib/admin/queries";
 import { getSiteSettings } from "@/lib/queries";
+import { getBillingSettings } from "@/lib/admin/billing-settings";
 import InvoiceDocument from "@/components/admin/billing/InvoiceDocument";
 import PrintButton from "@/components/PrintButton";
 
@@ -16,7 +17,7 @@ export const metadata: Metadata = {
  * robots noindex/robots.ts both also exclude it. */
 export default async function PublicInvoicePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const [invoice, settings] = await Promise.all([getInvoiceForDocument(id), getSiteSettings()]);
+  const [invoice, settings, billing] = await Promise.all([getInvoiceForDocument(id), getSiteSettings(), getBillingSettings()]);
   if (!invoice) notFound();
 
   return (
@@ -25,7 +26,7 @@ export default async function PublicInvoicePage({ params }: { params: Promise<{ 
         <PrintButton />
       </div>
       <div className="mx-auto max-w-3xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm print:border-0 print:shadow-none">
-        <InvoiceDocument invoice={invoice} settings={settings} />
+        <InvoiceDocument invoice={invoice} settings={settings} kraPin={billing.kra_pin} />
       </div>
     </div>
   );

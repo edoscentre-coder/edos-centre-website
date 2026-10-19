@@ -2,6 +2,8 @@ import "server-only";
 import { createServiceClient } from "@/lib/supabase/server";
 import { logAudit } from "@/lib/admin/audit";
 import { sendInvoiceStatusEmail } from "@/lib/admin/invoice-email";
+import { getBillingSettings } from "@/lib/admin/billing-settings";
+import { createDueRenewalInvoices } from "@/lib/admin/renewal-invoices";
 
 const REMINDER_DAYS_BEFORE_DUE = 3;
 
@@ -83,6 +85,30 @@ export async function runAutomationSweep() {
   const notifications: NotificationInsert[] = [];
   let subscriptionsUpdated = 0;
   let invoicesUpdated = 0;
+
+  // Renewal invoices (migration 026) — only when switched on under Billing
+  // automation. Everything after this step runs exactly as it did before.
+  let renewalInvoicesCreated = 0;
+  const billing = await getBillingSettings();
+  if (billing.migrated && billing.automation_enabled && billing.renewal_invoices) {
+    for (const r of await createDueRenewalInvoices(billing)) {
+      renewalInvoicesCreated++;
+      for (const recipientId of recipientIds) {
+        notifications.push({
+          recipient_id: recipientId,
+          type: "renewal_invoice",
+          severity: r.status === "draft" ? "warning" : "info",
+          title:
+            r.status === "draft"
+              ? `Renewal invoice ready to send — ${r.website}`
+              : `Renewal invoice ${r.emailed ? "emailed" : "issued (email not sent)"} — ${r.website}`,
+          message: `${r.invoiceNumber} for ${r.client}.${r.emailNote ? ` ${r.emailNote}` : ""}`,
+          link: "/admin/billing-automation",
+          dedup_key: `renewal_invoice:${r.invoiceId}`,
+        });
+      }
+    }
+  }
 
   const { data: subs } = await supabase
     .from("edoscentreadmin_subscriptions")
@@ -229,5 +255,5 @@ export async function runAutomationSweep() {
     notificationsCreated = data?.length ?? 0;
   }
 
-  return { subscriptionsUpdated, invoicesUpdated, remindersSent, notificationsCreated, checkedAt: today.toISOString() };
+  return { subscriptionsUpdated, invoicesUpdated, remindersSent, renewalInvoicesCreated, notificationsCreated, checkedAt: today.toISOString() };
 }

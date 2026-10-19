@@ -400,18 +400,19 @@ export interface Database {
           billing_cycle: string; amount: number; currency: string; status: string;
           start_date: string; renewal_date: string | null; grace_period_days: number;
           auto_renew: boolean; notes: string | null; created_at: string; updated_at: string;
+          auto_invoice: boolean;
         };
         Insert: {
           id?: string; website_id: string; client_id: string; plan_id?: string | null;
           billing_cycle?: string; amount: number; currency?: string; status?: string;
           start_date?: string; renewal_date?: string | null; grace_period_days?: number;
-          auto_renew?: boolean; notes?: string | null;
+          auto_renew?: boolean; notes?: string | null; auto_invoice?: boolean;
         };
         Update: {
           id?: string; website_id?: string; client_id?: string; plan_id?: string | null;
           billing_cycle?: string; amount?: number; currency?: string; status?: string;
           start_date?: string; renewal_date?: string | null; grace_period_days?: number;
-          auto_renew?: boolean; notes?: string | null;
+          auto_renew?: boolean; notes?: string | null; auto_invoice?: boolean;
         };
         Relationships: [];
       };
@@ -422,6 +423,7 @@ export interface Database {
           amount: number; tax: number; discount: number; total: number; currency: string;
           status: string; notes: string | null;
           reminder_sent_at: string | null; overdue_notice_sent_at: string | null;
+          renewal_period_start: string | null;
           created_at: string; updated_at: string;
         };
         Insert: {
@@ -430,6 +432,7 @@ export interface Database {
           amount: number; tax?: number; discount?: number; total: number; currency?: string;
           status?: string; notes?: string | null;
           reminder_sent_at?: string | null; overdue_notice_sent_at?: string | null;
+          renewal_period_start?: string | null;
         };
         Update: {
           id?: string; invoice_number?: string; client_id?: string; website_id?: string | null;
@@ -437,6 +440,7 @@ export interface Database {
           amount?: number; tax?: number; discount?: number; total?: number; currency?: string;
           status?: string; notes?: string | null;
           reminder_sent_at?: string | null; overdue_notice_sent_at?: string | null;
+          renewal_period_start?: string | null;
         };
         Relationships: [];
       };
@@ -559,6 +563,48 @@ export interface Database {
           merchant_request_id?: string | null; checkout_request_id?: string | null; status?: string;
           result_code?: string | null; result_desc?: string | null; mpesa_receipt_number?: string | null;
           transaction_date?: string | null; payment_id?: string | null; initiated_by?: string | null;
+        };
+        Relationships: [];
+      };
+      edoscentreadmin_billing_settings: {
+        Row: {
+          id: number; automation_enabled: boolean; renewal_invoices: boolean; renewal_days_before: number;
+          auto_send_invoices: boolean; mpesa_paybill: string | null; mpesa_account: string | null; mpesa_till: string | null;
+          bank_name: string | null; bank_account: string | null; bank_holder: string | null;
+          bank_branch: string | null; kra_pin: string | null; payment_note: string | null;
+          reply_to_email: string | null; bcc_email: string | null; attach_pdf: boolean;
+          updated_at: string; updated_by: string | null;
+        };
+        Insert: {
+          id?: number; automation_enabled?: boolean; renewal_invoices?: boolean; renewal_days_before?: number;
+          auto_send_invoices?: boolean; mpesa_paybill?: string | null; mpesa_account?: string | null; mpesa_till?: string | null;
+          bank_name?: string | null; bank_account?: string | null; bank_holder?: string | null;
+          bank_branch?: string | null; kra_pin?: string | null; payment_note?: string | null;
+          reply_to_email?: string | null; bcc_email?: string | null; attach_pdf?: boolean;
+          updated_at?: string; updated_by?: string | null;
+        };
+        Update: {
+          id?: number; automation_enabled?: boolean; renewal_invoices?: boolean; renewal_days_before?: number;
+          auto_send_invoices?: boolean; mpesa_paybill?: string | null; mpesa_account?: string | null; mpesa_till?: string | null;
+          bank_name?: string | null; bank_account?: string | null; bank_holder?: string | null;
+          bank_branch?: string | null; kra_pin?: string | null; payment_note?: string | null;
+          reply_to_email?: string | null; bcc_email?: string | null; attach_pdf?: boolean;
+          updated_at?: string; updated_by?: string | null;
+        };
+        Relationships: [];
+      };
+      edoscentreadmin_billing_email_log: {
+        Row: {
+          id: string; invoice_id: string | null; invoice_number: string | null; kind: string;
+          recipient: string | null; status: string; reason: string | null; is_test: boolean; created_at: string;
+        };
+        Insert: {
+          id?: string; invoice_id?: string | null; invoice_number?: string | null; kind: string;
+          recipient?: string | null; status: string; reason?: string | null; is_test?: boolean; created_at?: string;
+        };
+        Update: {
+          id?: string; invoice_id?: string | null; invoice_number?: string | null; kind?: string;
+          recipient?: string | null; status?: string; reason?: string | null; is_test?: boolean; created_at?: string;
         };
         Relationships: [];
       };

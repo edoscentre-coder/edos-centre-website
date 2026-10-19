@@ -30,6 +30,14 @@ const securityHeaders = [
   { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
 ];
 
+const pdfHeaders = [
+  { key: "Content-Security-Policy", value: "frame-ancestors 'self'" },
+  { key: "X-Frame-Options", value: "SAMEORIGIN" },
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+  { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
+];
+
 const nextConfig: NextConfig = {
   images: {
     remotePatterns: [
@@ -44,7 +52,15 @@ const nextConfig: NextConfig = {
     optimizePackageImports: ["lucide-react", "framer-motion"],
   },
   async headers() {
-    return [{ source: "/:path*", headers: securityHeaders }];
+    return [
+      // Everything except the admin invoice PDF keeps the strict headers.
+      { source: "/((?!api/admin/invoices/[^/]+/pdf).*)", headers: securityHeaders },
+      // The invoice PDF is shown in a window inside the admin (InvoiceViewer),
+      // so it may be framed — by this site only — and carries no object-src
+      // rule, which would stop the browser's PDF viewer from drawing it. It is
+      // admin-only and a PDF, so there is no page script to protect.
+      { source: "/api/admin/invoices/:id/pdf", headers: pdfHeaders },
+    ];
   },
 };
 

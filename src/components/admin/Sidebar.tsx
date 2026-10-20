@@ -49,7 +49,9 @@ export default function Sidebar({
           );
         })}
 
-        <div className="mt-6 px-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Coming soon</div>
+        {COMING_SOON_ITEMS.length > 0 && (
+          <div className="mt-6 px-3 text-xs font-semibold uppercase tracking-wider text-slate-500">Coming soon</div>
+        )}
         {COMING_SOON_ITEMS.map((item) => (
           <div
             key={item.label}

@@ -617,6 +617,36 @@ export interface Database {
         };
         Relationships: [];
       };
+      edoscentreadmin_support_tickets: {
+        Row: {
+          id: string; ticket_number: string; client_id: string; website_id: string | null; subject: string;
+          category: string; priority: string; status: string; opened_by_portal_user: string | null;
+          opened_by_admin: string | null; last_message_at: string; resolved_at: string | null;
+          created_at: string; updated_at: string;
+        };
+        Insert: {
+          id?: string; ticket_number: string; client_id: string; website_id?: string | null; subject: string;
+          category?: string; priority?: string; status?: string; opened_by_portal_user?: string | null;
+          opened_by_admin?: string | null; last_message_at?: string; resolved_at?: string | null;
+        };
+        Update: {
+          website_id?: string | null; subject?: string; category?: string; priority?: string; status?: string;
+          last_message_at?: string; resolved_at?: string | null;
+        };
+        Relationships: [];
+      };
+      edoscentreadmin_support_messages: {
+        Row: {
+          id: string; ticket_id: string; author_type: string; author_admin_id: string | null;
+          author_portal_user_id: string | null; author_name: string | null; body: string; is_internal: boolean; created_at: string;
+        };
+        Insert: {
+          id?: string; ticket_id: string; author_type: string; author_admin_id?: string | null;
+          author_portal_user_id?: string | null; author_name?: string | null; body: string; is_internal?: boolean;
+        };
+        Update: { body?: string; is_internal?: boolean };
+        Relationships: [];
+      };
       edoscentreadmin_notifications: {
         Row: {
           id: string; recipient_id: string; type: string; severity: string; title: string;
@@ -648,6 +678,7 @@ export interface Database {
     };
     Functions: {
       edoscentreadmin_next_invoice_number: { Args: Record<string, never>; Returns: string };
+      edoscentreadmin_next_ticket_number: { Args: Record<string, never>; Returns: string };
       edoscentre_check_rate_limit: { Args: { p_key: string; p_limit: number; p_window_seconds: number }; Returns: boolean };
       edoscentreadmin_current_client_id: { Args: Record<string, never>; Returns: string | null };
     };

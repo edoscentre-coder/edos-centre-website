@@ -24,7 +24,7 @@ import type { RenewalCandidate } from "@/lib/admin/renewal-invoices";
 import type { SuspensionCandidate } from "@/lib/admin/auto-suspend";
 import type { InvoiceEmailKind } from "@/lib/admin/invoice-email";
 import { InvoiceViewer } from "@/components/admin/billing/InvoiceViewer";
-import type { InvoiceLite, LogRow, RecentInvoice, SubscriptionLite } from "@/app/admin/(dashboard)/billing-automation/page";
+import type { InvoiceLite, LogRow, RecentInvoice, SubscriptionLite } from "@/app/admin/(dashboard)/settings/billing/page";
 
 const money = (currency: string, n: number) =>
   `${currency} ${Number(n).toLocaleString("en-KE", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
@@ -113,7 +113,7 @@ export default function BillingAutomationManager({
     <div className="space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900">Billing automation</h1>
+          <h2 className="text-lg font-semibold text-slate-900">Billing &amp; email automation</h2>
           <p className="mt-1 max-w-2xl text-sm text-slate-500">
             Renewal invoices for subscriptions, and the emails clients receive about their invoices. The daily check runs
             at 06:00 UTC (09:00 Nairobi). Manual invoices, payments and M-Pesa work as before.

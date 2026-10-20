@@ -103,7 +103,7 @@ export async function inviteAdminUser(formData: FormData) {
     action: isNewAccount ? "admin_user_invited" : "admin_user_granted_access",
     metadata: { email: parsed.email, role: parsed.role },
   });
-  revalidatePath("/admin/admin-users");
+  revalidatePath("/admin/settings/admin-users");
 
   return { email: parsed.email, role: parsed.role, tempPassword: isNewAccount ? tempPassword : null, isNewAccount };
 }
@@ -134,7 +134,7 @@ export async function updateAdminUser(id: string, formData: FormData) {
   await setWebsiteScope(id, parsed.role, websiteIds);
 
   await logAudit({ actorId: admin.id, action: "admin_user_updated", metadata: { id, role: parsed.role } });
-  revalidatePath("/admin/admin-users");
+  revalidatePath("/admin/settings/admin-users");
 }
 
 export async function setAdminUserActive(id: string, isActive: boolean) {
@@ -147,7 +147,7 @@ export async function setAdminUserActive(id: string, isActive: boolean) {
   if (error) throw new Error(error.message);
 
   await logAudit({ actorId: admin.id, action: isActive ? "admin_user_activated" : "admin_user_deactivated", metadata: { id } });
-  revalidatePath("/admin/admin-users");
+  revalidatePath("/admin/settings/admin-users");
 }
 
 export async function resetAdminUserPassword(id: string) {
@@ -162,6 +162,6 @@ export async function resetAdminUserPassword(id: string) {
   if (error) throw new Error(error.message);
 
   await logAudit({ actorId: admin.id, action: "admin_user_password_reset", metadata: { id } });
-  revalidatePath("/admin/admin-users");
+  revalidatePath("/admin/settings/admin-users");
   return { tempPassword };
 }

@@ -19,7 +19,8 @@ const schema = z
     path: ["confirm"],
   });
 
-export default function ChangePasswordForm() {
+/** `onDone` keeps the person where they are (Settings); without it, as before, they go to the dashboard. */
+export default function ChangePasswordForm({ onDone }: { onDone?: () => void } = {}) {
   const router = useRouter();
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -46,6 +47,13 @@ export default function ChangePasswordForm() {
     }
 
     await completePasswordChange();
+    if (onDone) {
+      setPassword("");
+      setConfirm("");
+      setLoading(false);
+      onDone();
+      return;
+    }
     router.push("/admin");
   }
 

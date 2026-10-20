@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import * as Dialog from "@radix-ui/react-dialog";
-import { Menu, X, LogOut, User, LayoutDashboard, Receipt } from "lucide-react";
+import { Menu, X, LogOut, User, LayoutDashboard, Receipt, LifeBuoy } from "lucide-react";
 import { Toaster } from "sonner";
 import { cn } from "@/lib/utils";
 import { portalLogoutAction } from "@/lib/portal/actions/auth-actions";
@@ -14,6 +14,7 @@ import type { ClientPortalUserRow } from "@/types/database.types";
 const NAV_ITEMS = [
   { label: "Dashboard", href: "/portal", icon: LayoutDashboard },
   { label: "Invoices", href: "/portal/invoices", icon: Receipt },
+  { label: "Support", href: "/portal/support", icon: LifeBuoy },
 ];
 
 function Nav({ onNavigate }: { onNavigate?: () => void }) {

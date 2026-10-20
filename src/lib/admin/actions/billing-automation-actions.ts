@@ -16,7 +16,7 @@ import { createRenewalInvoice, findRenewals } from "@/lib/admin/renewal-invoices
  * access to the EDOS Centre site — the same guard the invoice actions use.
  */
 
-const PAGE = "/admin/billing-automation";
+const PAGE = "/admin/settings/billing";
 
 /**
  * What each action returns. Errors come back as a value rather than being

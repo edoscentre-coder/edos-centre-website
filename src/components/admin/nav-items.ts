@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { LayoutDashboard, Globe, ScrollText, Users, Repeat, Receipt, MailCheck, Server, Bell, BarChart3, Search, UserCog, LifeBuoy, Settings } from "lucide-react";
+import { LayoutDashboard, Globe, ScrollText, Users, Repeat, Receipt, Server, Bell, BarChart3, Search, LifeBuoy, Settings } from "lucide-react";
 
 export interface NavItem {
   label: string;
@@ -14,17 +14,15 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Clients", href: "/admin/clients", icon: Users },
   { label: "Subscriptions", href: "/admin/subscriptions", icon: Repeat },
   { label: "Invoices", href: "/admin/invoices", icon: Receipt },
-  { label: "Billing automation", href: "/admin/billing-automation", icon: MailCheck },
   { label: "Hosting & Domains", href: "/admin/hosting", icon: Server },
   { label: "Reports", href: "/admin/reports", icon: BarChart3 },
   { label: "SEO", href: "/admin/seo", icon: Search },
   { label: "Notifications", href: "/admin/notifications", icon: Bell },
   { label: "Activity Logs", href: "/admin/activity-logs", icon: ScrollText },
-  { label: "Admin Users", href: "/admin/admin-users", icon: UserCog, superAdminOnly: true },
+  { label: "Support", href: "/admin/support", icon: LifeBuoy },
+  // Billing automation and Admin users live under Settings (tabs).
+  { label: "Settings", href: "/admin/settings", icon: Settings },
 ];
 
-/** Sections planned for later phases — shown so the platform's shape is visible, but not wired to real functionality yet. */
-export const COMING_SOON_ITEMS: NavItem[] = [
-  { label: "Support", href: "#", icon: LifeBuoy },
-  { label: "Settings", href: "#", icon: Settings },
-];
+/** Sections planned for later phases, shown greyed out. Empty: Support and Settings are built. */
+export const COMING_SOON_ITEMS: NavItem[] = [];

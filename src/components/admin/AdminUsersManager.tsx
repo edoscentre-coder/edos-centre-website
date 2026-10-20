@@ -163,7 +163,7 @@ export default function AdminUsersManager({
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900">Admin Users</h1>
+          <h2 className="text-lg font-semibold text-slate-900">Admin users</h2>
           <p className="mt-1 text-sm text-slate-500">Who can sign in to this Control Centre, and what they can touch.</p>
         </div>
         <Button onClick={() => setInviteOpen(true)}>

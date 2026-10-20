@@ -4,7 +4,7 @@ import { findSuspensions } from "@/lib/admin/auto-suspend";
 import { createServiceClient } from "@/lib/supabase/server";
 import BillingAutomationManager from "@/components/admin/billing/BillingAutomationManager";
 
-export const metadata = { title: "Billing automation — EDOS Control Centre" };
+export const metadata = { title: "Billing & email — Settings — EDOS Control Centre" };
 export const dynamic = "force-dynamic";
 
 const iso = (d: Date) => d.toISOString().slice(0, 10);

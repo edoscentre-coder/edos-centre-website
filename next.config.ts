@@ -51,6 +51,13 @@ const nextConfig: NextConfig = {
   experimental: {
     optimizePackageImports: ["lucide-react", "framer-motion"],
   },
+  // Billing automation and Admin users moved under Settings; old links still land.
+  async redirects() {
+    return [
+      { source: "/admin/billing-automation", destination: "/admin/settings/billing", permanent: false },
+      { source: "/admin/admin-users", destination: "/admin/settings/admin-users", permanent: false },
+    ];
+  },
   async headers() {
     return [
       // Everything except the admin invoice PDF keeps the strict headers.

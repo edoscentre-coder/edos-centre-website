@@ -104,7 +104,7 @@ export async function runAutomationSweep() {
               ? `Renewal invoice ready to send — ${r.website}`
               : `Renewal invoice ${r.emailed ? "emailed" : "issued (email not sent)"} — ${r.website}`,
           message: `${r.invoiceNumber} for ${r.client}.${r.emailNote ? ` ${r.emailNote}` : ""}`,
-          link: "/admin/billing-automation",
+          link: "/admin/settings/billing",
           dedup_key: `renewal_invoice:${r.invoiceId}`,
         });
       }
@@ -263,7 +263,7 @@ export async function runAutomationSweep() {
           severity: "warning",
           title: `Final notice sent — ${n.website}`,
           message: `${n.invoiceNumber} is unpaid; the site will be suspended if it stays unpaid.`,
-          link: "/admin/billing-automation",
+          link: "/admin/settings/billing",
           dedup_key: `suspension_notice:${n.invoiceNumber}`,
         });
       }
@@ -285,7 +285,7 @@ export async function runAutomationSweep() {
           severity: "warning",
           title: `Not suspended — ${n.website}`,
           message: `${n.invoiceNumber}: ${n.reason}`,
-          link: "/admin/billing-automation",
+          link: "/admin/settings/billing",
           dedup_key: `suspension_blocked:${n.invoiceNumber}:${day}`,
         });
       }

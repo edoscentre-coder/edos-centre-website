@@ -1,5 +1,6 @@
 import { getBillingSettings } from "@/lib/admin/billing-settings";
 import { findRenewals } from "@/lib/admin/renewal-invoices";
+import { findSuspensions } from "@/lib/admin/auto-suspend";
 import { createServiceClient } from "@/lib/supabase/server";
 import BillingAutomationManager from "@/components/admin/billing/BillingAutomationManager";
 
@@ -17,6 +18,7 @@ export default async function BillingAutomationPage() {
 
   // What the sweep would do today, without doing it.
   const renewals = settings.migrated ? await findRenewals(settings, today).catch(() => []) : [];
+  const suspensions = settings.suspendReady ? await findSuspensions(settings, today).catch(() => []) : [];
 
   const [dueSoon, overdue, drafts, subs, log, recent] = await Promise.all([
     supabase
@@ -42,9 +44,7 @@ export default async function BillingAutomationPage() {
     supabase
       .from("edoscentreadmin_subscriptions")
       .select(
-        settings.migrated
-          ? "id, status, renewal_date, amount, currency, billing_cycle, auto_renew, auto_invoice, edoscentreadmin_websites(name), edoscentreadmin_clients(company_name, email)"
-          : "id, status, renewal_date, amount, currency, billing_cycle, auto_renew, edoscentreadmin_websites(name), edoscentreadmin_clients(company_name, email)",
+        `id, status, renewal_date, amount, currency, billing_cycle, auto_renew, grace_period_days${settings.migrated ? ", auto_invoice" : ""}${settings.suspendReady ? ", auto_suspend" : ""}, edoscentreadmin_websites(name), edoscentreadmin_clients(company_name, email)`,
       )
       .not("status", "in", "(cancelled,expired)")
       .order("renewal_date"),
@@ -64,6 +64,7 @@ export default async function BillingAutomationPage() {
       cronConfigured={Boolean(process.env.CRON_SECRET)}
       emailConfigured={Boolean(process.env.RESEND_API_KEY && process.env.RESEND_FROM_EMAIL)}
       renewals={renewals}
+      suspensions={suspensions}
       dueSoon={(dueSoon.data ?? []) as unknown as InvoiceLite[]}
       overdue={(overdue.data ?? []) as unknown as InvoiceLite[]}
       drafts={(drafts.data ?? []) as unknown as InvoiceLite[]}
@@ -93,6 +94,8 @@ export type SubscriptionLite = {
   billing_cycle: string;
   auto_renew: boolean;
   auto_invoice?: boolean;
+  auto_suspend?: boolean;
+  grace_period_days?: number;
   edoscentreadmin_websites: { name: string } | null;
   edoscentreadmin_clients: { company_name: string; email: string | null } | null;
 };

@@ -4,6 +4,7 @@ import { logAudit } from "@/lib/admin/audit";
 import { sendInvoiceStatusEmail } from "@/lib/admin/invoice-email";
 import { getBillingSettings } from "@/lib/admin/billing-settings";
 import { createDueRenewalInvoices } from "@/lib/admin/renewal-invoices";
+import { runAutoSuspend } from "@/lib/admin/auto-suspend";
 
 const REMINDER_DAYS_BEFORE_DUE = 3;
 
@@ -245,6 +246,52 @@ export async function runAutomationSweep() {
     }
   }
 
+  // Automatic suspension (migration 028) — only with both switches on. Runs
+  // after the overdue pass above, so invoice states are current.
+  let suspensionNotices = 0;
+  let websitesSuspended = 0;
+  if (billing.suspendReady && billing.automation_enabled && billing.auto_suspend) {
+    const s = await runAutoSuspend(billing);
+    suspensionNotices = s.noticesSent.length;
+    websitesSuspended = s.suspended.length;
+    const day = todayStr;
+    for (const recipientId of recipientIds) {
+      for (const n of s.noticesSent) {
+        notifications.push({
+          recipient_id: recipientId,
+          type: "suspension_notice",
+          severity: "warning",
+          title: `Final notice sent — ${n.website}`,
+          message: `${n.invoiceNumber} is unpaid; the site will be suspended if it stays unpaid.`,
+          link: "/admin/billing-automation",
+          dedup_key: `suspension_notice:${n.invoiceNumber}`,
+        });
+      }
+      for (const n of s.suspended) {
+        notifications.push({
+          recipient_id: recipientId,
+          type: "website_auto_suspended",
+          severity: "critical",
+          title: `Website suspended — ${n.website}`,
+          message: `${n.invoiceNumber} unpaid.${n.emailed ? " The client has been emailed." : " The suspension email could not be sent."} Paying it in full brings the site back.`,
+          link: "/admin/websites",
+          dedup_key: `website_auto_suspended:${n.invoiceNumber}`,
+        });
+      }
+      for (const n of s.blocked) {
+        notifications.push({
+          recipient_id: recipientId,
+          type: "suspension_blocked",
+          severity: "warning",
+          title: `Not suspended — ${n.website}`,
+          message: `${n.invoiceNumber}: ${n.reason}`,
+          link: "/admin/billing-automation",
+          dedup_key: `suspension_blocked:${n.invoiceNumber}:${day}`,
+        });
+      }
+    }
+  }
+
   let notificationsCreated = 0;
   if (notifications.length > 0) {
     const { data, error } = await supabase
@@ -255,5 +302,14 @@ export async function runAutomationSweep() {
     notificationsCreated = data?.length ?? 0;
   }
 
-  return { subscriptionsUpdated, invoicesUpdated, remindersSent, renewalInvoicesCreated, notificationsCreated, checkedAt: today.toISOString() };
+  return {
+    subscriptionsUpdated,
+    invoicesUpdated,
+    remindersSent,
+    renewalInvoicesCreated,
+    suspensionNotices,
+    websitesSuspended,
+    notificationsCreated,
+    checkedAt: today.toISOString(),
+  };
 }

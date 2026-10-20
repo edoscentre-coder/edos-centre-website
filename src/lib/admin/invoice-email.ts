@@ -23,7 +23,16 @@ import { vatLabel } from "@/lib/admin/vat";
  * "Email" button, the payment cascade, and the daily sweep.
  */
 
-export type InvoiceEmailKind = "view" | "new_invoice" | "payment_received" | "reminder_due_soon" | "reminder_overdue";
+export type InvoiceEmailKind =
+  | "view"
+  | "new_invoice"
+  | "payment_received"
+  | "reminder_due_soon"
+  | "reminder_overdue"
+  /** Final notice before automatic suspension (migration 028). */
+  | "suspension_notice"
+  /** The website has just been suspended for this invoice. */
+  | "website_suspended";
 
 const FALLBACK = {
   email: "info@edoscentre.co.ke",
@@ -38,9 +47,14 @@ function money(n: number, currency: string) {
 const esc = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
-function subjectFor(kind: InvoiceEmailKind, invoice: InvoiceForDocument): string {
+function subjectFor(kind: InvoiceEmailKind, invoice: InvoiceForDocument, suspendOn?: string | null): string {
   const amount = money(invoice.total, invoice.currency);
+  const site = invoice.edoscentreadmin_websites?.name?.trim() || "your website";
   switch (kind) {
+    case "suspension_notice":
+      return `Final notice: ${site} will be suspended${suspendOn ? ` on ${formatDate(suspendOn)}` : ""} — Invoice ${invoice.invoice_number}`;
+    case "website_suspended":
+      return `${site} has been suspended — Invoice ${invoice.invoice_number} (${amount})`;
     case "payment_received":
       return `Payment received — Invoice ${invoice.invoice_number} (${amount})`;
     case "reminder_due_soon":
@@ -66,6 +80,7 @@ function compose(
   paid: number,
   paidOn: string,
   settings: BillingSettings,
+  suspendOn?: string | null,
 ): Message {
   const client = invoice.edoscentreadmin_clients;
   const website = invoice.edoscentreadmin_websites?.name ?? null;
@@ -74,8 +89,13 @@ function compose(
   const due = formatDate(invoice.due_date);
   const name = client?.contact_person || client?.company_name || "there";
 
+  const when = suspendOn ? formatDate(suspendOn) : "shortly";
   const headline =
-    kind === "payment_received"
+    kind === "suspension_notice"
+      ? `Suspension on ${when}`
+      : kind === "website_suspended"
+        ? `${website ?? "Your website"} is suspended`
+        : kind === "payment_received"
       ? "Payment received — thank you"
       : kind === "reminder_due_soon"
         ? `Due ${due}`
@@ -84,7 +104,11 @@ function compose(
           : `Invoice ${invoice.invoice_number}`;
 
   const lead =
-    kind === "payment_received"
+    kind === "suspension_notice"
+      ? `Hi ${name}, invoice ${invoice.invoice_number}${website ? ` for ${website}` : ""} was due on ${due} and is still unpaid. If payment isn't received, the website will be suspended on ${when}. Paying before then keeps it online — if you've already paid, reply with the reference and we'll match it.`
+      : kind === "website_suspended"
+        ? `Hi ${name}, because invoice ${invoice.invoice_number} remains unpaid, ${website ?? "your website"} has been suspended. Nothing has been deleted: as soon as the payment is received the website comes back online automatically.`
+        : kind === "payment_received"
       ? `Hi ${name}, we've received your payment for invoice ${invoice.invoice_number}. A copy marked paid is attached for your records.`
       : kind === "reminder_due_soon"
         ? `Hi ${name}, a friendly reminder that invoice ${invoice.invoice_number}${website ? ` for ${website}` : ""} is due on ${due}. Paying before then keeps everything running without interruption.`
@@ -105,6 +129,7 @@ function compose(
   } else {
     if (paid > 0) rows.push(["Paid so far", money(paid, invoice.currency)]);
     rows.push(["Balance due", balance], ["Due date", due]);
+    if (kind === "suspension_notice" && suspendOn) rows.push(["Suspension date", formatDate(suspendOn)]);
   }
 
   return {
@@ -238,6 +263,7 @@ export async function buildInvoicePdf(invoiceId: string): Promise<{ bytes: Uint8
 
 /** Subject, HTML and plain text for one email — pure, so it can be previewed and checked without sending. */
 export function invoiceEmailContent(args: {
+  suspendOn?: string | null;
   kind: InvoiceEmailKind;
   invoice: InvoiceForDocument;
   paid: number;
@@ -247,9 +273,9 @@ export function invoiceEmailContent(args: {
   logoUrl: string;
   footer: string;
 }) {
-  const message = compose(args.kind, args.invoice, args.paid, args.paidOn, args.settings);
+  const message = compose(args.kind, args.invoice, args.paid, args.paidOn, args.settings, args.suspendOn);
   return {
-    subject: subjectFor(args.kind, args.invoice),
+    subject: subjectFor(args.kind, args.invoice, args.suspendOn),
     html: html(message, args.viewUrl, args.logoUrl, args.footer, "#0b7a44"),
     text: text(message, args.viewUrl, args.footer),
   };
@@ -267,7 +293,7 @@ export function invoiceEmailContent(args: {
 export async function sendInvoiceStatusEmail(
   invoiceId: string,
   kind: InvoiceEmailKind,
-  opts: { throwOnSkip?: boolean; paidOn?: string; testTo?: string } = {},
+  opts: { throwOnSkip?: boolean; paidOn?: string; testTo?: string; suspendOn?: string | null } = {},
 ): Promise<{ sent: boolean; reason?: string }> {
   const skip = async (reason: string, invoiceNumber: string | null, recipient: string | null, status: "skipped" | "failed" = "skipped") => {
     await logBillingEmail({ invoice_id: invoiceNumber ? invoiceId : null, invoice_number: invoiceNumber, kind, recipient, status, reason, is_test: Boolean(opts.testTo) });
@@ -290,6 +316,7 @@ export async function sendInvoiceStatusEmail(
   const { billing, paid, paidOn, footer } = ctx;
   const viewUrl = absoluteUrl(`/invoice/${invoice.id}`);
   const content = invoiceEmailContent({
+    suspendOn: opts.suspendOn,
     kind,
     invoice,
     paid,

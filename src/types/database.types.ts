@@ -400,19 +400,19 @@ export interface Database {
           billing_cycle: string; amount: number; currency: string; status: string;
           start_date: string; renewal_date: string | null; grace_period_days: number;
           auto_renew: boolean; notes: string | null; created_at: string; updated_at: string;
-          auto_invoice: boolean;
+          auto_invoice: boolean; auto_suspend: boolean;
         };
         Insert: {
           id?: string; website_id: string; client_id: string; plan_id?: string | null;
           billing_cycle?: string; amount: number; currency?: string; status?: string;
           start_date?: string; renewal_date?: string | null; grace_period_days?: number;
-          auto_renew?: boolean; notes?: string | null; auto_invoice?: boolean;
+          auto_renew?: boolean; notes?: string | null; auto_invoice?: boolean; auto_suspend?: boolean;
         };
         Update: {
           id?: string; website_id?: string; client_id?: string; plan_id?: string | null;
           billing_cycle?: string; amount?: number; currency?: string; status?: string;
           start_date?: string; renewal_date?: string | null; grace_period_days?: number;
-          auto_renew?: boolean; notes?: string | null; auto_invoice?: boolean;
+          auto_renew?: boolean; notes?: string | null; auto_invoice?: boolean; auto_suspend?: boolean;
         };
         Relationships: [];
       };
@@ -424,6 +424,7 @@ export interface Database {
           status: string; notes: string | null;
           reminder_sent_at: string | null; overdue_notice_sent_at: string | null;
           renewal_period_start: string | null;
+          suspension_notice_sent_at: string | null; suspended_at: string | null;
           created_at: string; updated_at: string;
         };
         Insert: {
@@ -433,6 +434,7 @@ export interface Database {
           status?: string; notes?: string | null;
           reminder_sent_at?: string | null; overdue_notice_sent_at?: string | null;
           renewal_period_start?: string | null;
+          suspension_notice_sent_at?: string | null; suspended_at?: string | null;
         };
         Update: {
           id?: string; invoice_number?: string; client_id?: string; website_id?: string | null;
@@ -441,6 +443,7 @@ export interface Database {
           status?: string; notes?: string | null;
           reminder_sent_at?: string | null; overdue_notice_sent_at?: string | null;
           renewal_period_start?: string | null;
+          suspension_notice_sent_at?: string | null; suspended_at?: string | null;
         };
         Relationships: [];
       };
@@ -574,6 +577,7 @@ export interface Database {
           bank_branch: string | null; kra_pin: string | null; payment_note: string | null;
           reply_to_email: string | null; bcc_email: string | null; attach_pdf: boolean;
           vat_enabled: boolean; vat_rate: number; prices_include_vat: boolean;
+          auto_suspend: boolean; suspension_notice_days: number; suspension_message: string;
           updated_at: string; updated_by: string | null;
         };
         Insert: {
@@ -583,6 +587,7 @@ export interface Database {
           bank_branch?: string | null; kra_pin?: string | null; payment_note?: string | null;
           reply_to_email?: string | null; bcc_email?: string | null; attach_pdf?: boolean;
           vat_enabled?: boolean; vat_rate?: number; prices_include_vat?: boolean;
+          auto_suspend?: boolean; suspension_notice_days?: number; suspension_message?: string;
           updated_at?: string; updated_by?: string | null;
         };
         Update: {
@@ -592,6 +597,7 @@ export interface Database {
           bank_branch?: string | null; kra_pin?: string | null; payment_note?: string | null;
           reply_to_email?: string | null; bcc_email?: string | null; attach_pdf?: boolean;
           vat_enabled?: boolean; vat_rate?: number; prices_include_vat?: boolean;
+          auto_suspend?: boolean; suspension_notice_days?: number; suspension_message?: string;
           updated_at?: string; updated_by?: string | null;
         };
         Relationships: [];

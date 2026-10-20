@@ -16,10 +16,12 @@ import {
   sendDraftInvoice,
   sendTestBillingEmail,
   setSubscriptionAutoInvoice,
+  setSubscriptionAutoSuspend,
   type ActionResult,
 } from "@/lib/admin/actions/billing-automation-actions";
 import type { BillingSettings } from "@/lib/admin/billing-settings";
 import type { RenewalCandidate } from "@/lib/admin/renewal-invoices";
+import type { SuspensionCandidate } from "@/lib/admin/auto-suspend";
 import type { InvoiceEmailKind } from "@/lib/admin/invoice-email";
 import { InvoiceViewer } from "@/components/admin/billing/InvoiceViewer";
 import type { InvoiceLite, LogRow, RecentInvoice, SubscriptionLite } from "@/app/admin/(dashboard)/billing-automation/page";
@@ -58,6 +60,7 @@ export default function BillingAutomationManager({
   cronConfigured,
   emailConfigured,
   renewals,
+  suspensions,
   dueSoon,
   overdue,
   drafts,
@@ -65,10 +68,11 @@ export default function BillingAutomationManager({
   log,
   recentInvoices,
 }: {
-  settings: BillingSettings & { migrated: boolean; vatReady: boolean };
+  settings: BillingSettings & { migrated: boolean; vatReady: boolean; suspendReady: boolean };
   cronConfigured: boolean;
   emailConfigured: boolean;
   renewals: RenewalCandidate[];
+  suspensions: SuspensionCandidate[];
   dueSoon: InvoiceLite[];
   overdue: InvoiceLite[];
   drafts: InvoiceLite[];
@@ -118,6 +122,11 @@ export default function BillingAutomationManager({
             <Pill ok={settings.migrated}>{settings.migrated ? "Database ready" : "Migration 026 not run"}</Pill>
             <Pill ok={on}>{on ? "Automatic renewal invoices on" : "Automatic renewal invoices off"}</Pill>
             <Pill ok={emailConfigured}>{emailConfigured ? "Email configured" : "Email not configured (RESEND)"}</Pill>
+            {settings.suspendReady && (
+              <Pill ok={on && settings.auto_suspend}>
+                {on && settings.auto_suspend ? "Automatic suspension on" : "Automatic suspension off"}
+              </Pill>
+            )}
             <Pill ok={cronConfigured}>{cronConfigured ? "Daily schedule configured" : "CRON_SECRET not set — daily check will not run"}</Pill>
           </div>
         </div>
@@ -199,6 +208,52 @@ export default function BillingAutomationManager({
             </h3>
             <InvoiceList rows={overdue} empty="Nothing overdue." />
           </section>
+
+          {settings.suspendReady && (
+            <section>
+              <h3 className="text-sm font-semibold text-slate-700">
+                Suspensions{" "}
+                <span className="font-normal text-slate-500">
+                  — unpaid subscription invoices: final notice {settings.suspension_notice_days} day
+                  {settings.suspension_notice_days === 1 ? "" : "s"} before, then suspended after the grace period
+                  {on && settings.auto_suspend ? "" : " (automatic suspension is off — nothing will happen)"}
+                </span>
+              </h3>
+              {suspensions.length === 0 ? (
+                <p className="mt-2 text-sm text-slate-500">No unpaid subscription invoices past their due date.</p>
+              ) : (
+                <table className="mt-2 w-full text-sm">
+                  <tbody className="divide-y divide-slate-100">
+                    {suspensions.map((x) => (
+                      <tr key={x.invoiceId}>
+                        <td className="py-2 pr-3">
+                          <div className="font-medium text-slate-900">{x.website}</div>
+                          <div className="text-xs text-slate-500">
+                            <span className="font-mono">{x.invoiceNumber}</span> · {x.client} · due {date(x.dueDate)}
+                          </div>
+                        </td>
+                        <td className="py-2 pr-3 text-slate-600">Suspends {date(x.suspendDate)}</td>
+                        <td className="py-2 pr-3 text-right font-medium">{money(x.currency, x.balance)}</td>
+                        <td className="py-2 text-right text-xs">
+                          <span
+                            className={
+                              x.stage === "suspend_due"
+                                ? "font-medium text-red-700"
+                                : x.stage === "blocked" || x.stage === "notice_due"
+                                  ? "font-medium text-amber-700"
+                                  : "text-slate-500"
+                            }
+                          >
+                            {x.note}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </section>
+          )}
 
           {willInvoice.length > 0 && !on && (
             <p className="text-xs text-slate-500">
@@ -319,6 +374,48 @@ export default function BillingAutomationManager({
               </div>
 
               <div>
+                <h3 className="text-sm font-semibold text-slate-700">Automatic suspension</h3>
+                {settings.suspendReady ? (
+                  <div className="mt-3 grid gap-4 md:grid-cols-2">
+                    <div className="space-y-3">
+                      <Checkbox
+                        id="auto_suspend"
+                        name="auto_suspend"
+                        defaultChecked={settings.auto_suspend}
+                        label="Suspend websites automatically when a subscription invoice stays unpaid"
+                      />
+                      <p className="text-xs text-slate-500">
+                        A website is suspended once its invoice is past due by the subscription&apos;s grace period — and only if a
+                        final notice reached the client at least the notice period before. No email on file means no suspension;
+                        you are notified instead. Paying in full brings the site back automatically. Turn it off per client under
+                        Subscriptions below.
+                      </p>
+                      <div>
+                        <Label htmlFor="suspension_notice_days">Final notice, days before suspension</Label>
+                        <Input
+                          id="suspension_notice_days"
+                          name="suspension_notice_days"
+                          type="number"
+                          min={1}
+                          max={30}
+                          defaultValue={settings.suspension_notice_days}
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <Label htmlFor="suspension_message">Message shown on the client&apos;s site while suspended</Label>
+                      <Textarea id="suspension_message" name="suspension_message" defaultValue={settings.suspension_message} className="min-h-[90px]" />
+                      <p className="mt-1 text-xs text-slate-500">Visitors to the website see this; the reason (an unpaid invoice) stays in the admin.</p>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="mt-1 text-xs text-amber-800">
+                    Run <code className="font-mono">supabase/migrations/028_auto_suspend.sql</code> to turn this on.
+                  </p>
+                )}
+              </div>
+
+              <div>
                 <h3 className="text-sm font-semibold text-slate-700">Payment details on emails and PDFs</h3>
                 <p className="text-xs text-slate-500">The same as EDOS Poa&apos;s invoices. Leave a field blank to leave it off.</p>
                 <div className="mt-3 grid gap-4 md:grid-cols-3">
@@ -375,6 +472,8 @@ export default function BillingAutomationManager({
               <option value="reminder_due_soon">Due-soon reminder</option>
               <option value="reminder_overdue">Overdue notice</option>
               <option value="payment_received">Payment receipt</option>
+              <option value="suspension_notice">Final notice before suspension</option>
+              <option value="website_suspended">Website suspended</option>
             </Select>
           </div>
           <Button
@@ -403,12 +502,14 @@ export default function BillingAutomationManager({
                 <th className="pb-2 font-medium">Amount</th>
                 <th className="pb-2 font-medium">Status</th>
                 <th className="pb-2 font-medium">Automatic invoices</th>
+                {settings.suspendReady && <th className="pb-2 font-medium">Auto-suspend</th>}
                 <th />
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {subscriptions.map((s) => {
                 const auto = s.auto_invoice !== false;
+                const suspendOn = s.auto_suspend !== false;
                 return (
                   <tr key={s.id}>
                     <td className="py-2 pr-3">
@@ -439,6 +540,24 @@ export default function BillingAutomationManager({
                         </button>
                       )}
                     </td>
+                    {settings.suspendReady && (
+                      <td className="py-2 pr-3">
+                        <button
+                          type="button"
+                          disabled={pending}
+                          onClick={() =>
+                            run(`suspend:${s.id}`, () => setSubscriptionAutoSuspend(s.id, !suspendOn), () =>
+                              suspendOn ? "This website will never be suspended automatically." : "Automatic suspension on for this website.",
+                            )
+                          }
+                          className={`inline-flex items-center gap-1 text-xs font-medium ${suspendOn ? "text-emerald-700" : "text-slate-500"} disabled:opacity-50`}
+                          title={`Grace period: ${s.grace_period_days ?? 7} days after the due date`}
+                        >
+                          {suspendOn ? <CheckCircle2 className="h-3.5 w-3.5" /> : <XCircle className="h-3.5 w-3.5" />}
+                          {suspendOn ? `On · ${s.grace_period_days ?? 7}d grace` : "Never"}
+                        </button>
+                      </td>
+                    )}
                     <td className="py-2 text-right">
                       <Button
                         size="sm"

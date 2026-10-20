@@ -58,6 +58,13 @@ const settingsSchema = z.object({
   bcc_email: z.union([z.literal(""), z.email("Copy-to must be an email address.")]).transform((v) => v || null),
 });
 
+const noticeDaysSchema = z.coerce.number().int().min(1, "At least 1 day of notice.").max(30, "At most 30 days of notice.");
+const messageSchema = z
+  .string()
+  .trim()
+  .min(1, "Write the message the client's site shows while suspended.")
+  .max(300, "Keep the suspension message under 300 characters.");
+
 const vatRateSchema = z.coerce.number().min(0, "VAT cannot be negative.").max(100, "VAT is a percentage, at most 100.");
 
 async function requireMigrated() {
@@ -86,6 +93,14 @@ async function saveBillingSettingsImpl(formData: FormData) {
           prices_include_vat: formBool(formData, "prices_include_vat"),
         }
       : {}),
+    // Suspension columns arrive with migration 028.
+    ...(before.suspendReady
+      ? {
+          auto_suspend: formBool(formData, "auto_suspend"),
+          suspension_notice_days: noticeDaysSchema.parse(formData.get("suspension_notice_days") ?? 3),
+          suspension_message: messageSchema.parse(formData.get("suspension_message") ?? ""),
+        }
+      : {}),
     updated_at: new Date().toISOString(),
     updated_by: admin.id,
   };
@@ -102,6 +117,7 @@ async function saveBillingSettingsImpl(formData: FormData) {
       auto_send_invoices: { from: before.auto_send_invoices, to: patch.auto_send_invoices },
       renewal_days_before: patch.renewal_days_before,
       ...(before.vatReady ? { vat_enabled: { from: before.vat_enabled, to: patch.vat_enabled }, vat_rate: patch.vat_rate } : {}),
+      ...(before.suspendReady ? { auto_suspend: { from: before.auto_suspend, to: patch.auto_suspend } } : {}),
     },
   });
   revalidatePath(PAGE);
@@ -118,13 +134,22 @@ async function runBillingSweepNowImpl() {
   return result;
 }
 
-const KINDS: InvoiceEmailKind[] = ["new_invoice", "reminder_due_soon", "reminder_overdue", "payment_received"];
+const KINDS: InvoiceEmailKind[] = [
+  "new_invoice",
+  "reminder_due_soon",
+  "reminder_overdue",
+  "payment_received",
+  "suspension_notice",
+  "website_suspended",
+];
 
 /** A real invoice's email, sent to the admin instead of the client. */
 async function sendTestBillingEmailImpl(invoiceId: string, kind: InvoiceEmailKind) {
   const admin = await requireAdmin("edos-centre");
   if (!KINDS.includes(kind)) throw new Error("Unknown email type.");
-  await sendInvoiceStatusEmail(invoiceId, kind, { throwOnSkip: true, testTo: admin.email });
+  // A test of the final notice shows a date three days out, as a real one would.
+  const suspendOn = kind === "suspension_notice" ? new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10) : undefined;
+  await sendInvoiceStatusEmail(invoiceId, kind, { throwOnSkip: true, testTo: admin.email, suspendOn });
   revalidatePath(PAGE);
   return admin.email;
 }
@@ -166,6 +191,18 @@ async function createRenewalInvoiceNowImpl(subscriptionId: string) {
   return created;
 }
 
+/** Per-subscription opt-out from automatic suspension. */
+async function setSubscriptionAutoSuspendImpl(subscriptionId: string, on: boolean) {
+  const admin = await requireAdmin("edos-centre");
+  const settings = await requireMigrated();
+  if (!settings.suspendReady) throw new Error("Run supabase/migrations/028_auto_suspend.sql first.");
+  const supabase = await createServiceClient();
+  const { error } = await supabase.from("edoscentreadmin_subscriptions").update({ auto_suspend: on }).eq("id", subscriptionId);
+  if (error) throw new Error(error.message);
+  await logAudit({ actorId: admin.id, action: "subscription_auto_suspend_set", metadata: { subscription_id: subscriptionId, on } });
+  revalidatePath(PAGE);
+}
+
 /** Per-subscription opt-out from automatic invoices. */
 async function setSubscriptionAutoInvoiceImpl(subscriptionId: string, on: boolean) {
   const admin = await requireAdmin("edos-centre");
@@ -201,4 +238,8 @@ export async function createRenewalInvoiceNow(subscriptionId: string) {
 
 export async function setSubscriptionAutoInvoice(subscriptionId: string, on: boolean) {
   return attempt(() => setSubscriptionAutoInvoiceImpl(subscriptionId, on));
+}
+
+export async function setSubscriptionAutoSuspend(subscriptionId: string, on: boolean) {
+  return attempt(() => setSubscriptionAutoSuspendImpl(subscriptionId, on));
 }

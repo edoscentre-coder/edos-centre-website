@@ -32,6 +32,9 @@ export const DEFAULT_BILLING_SETTINGS: BillingSettings = {
   vat_enabled: false,
   vat_rate: 16,
   prices_include_vat: false,
+  auto_suspend: false,
+  suspension_notice_days: 3,
+  suspension_message: "This website is temporarily unavailable. Please check back soon.",
   updated_at: new Date(0).toISOString(),
   updated_by: null,
 };
@@ -41,17 +44,20 @@ export const DEFAULT_BILLING_SETTINGS: BillingSettings = {
  * automation stays off either way. `vatReady` says whether migration 027 has
  * added the VAT columns; until it has, VAT stays off and is not saved.
  */
-export async function getBillingSettings(): Promise<BillingSettings & { migrated: boolean; vatReady: boolean }> {
+export async function getBillingSettings(): Promise<BillingSettings & { migrated: boolean; vatReady: boolean; suspendReady: boolean }> {
   const supabase = await createServiceClient();
   const { data, error } = await supabase.from("edoscentreadmin_billing_settings").select("*").eq("id", 1).maybeSingle();
-  if (error || !data) return { ...DEFAULT_BILLING_SETTINGS, migrated: false, vatReady: false };
+  if (error || !data) return { ...DEFAULT_BILLING_SETTINGS, migrated: false, vatReady: false, suspendReady: false };
   const vatReady = "vat_enabled" in data;
+  // Migration 028; until it is run, nothing is ever suspended automatically.
+  const suspendReady = "auto_suspend" in data;
   return {
     ...DEFAULT_BILLING_SETTINGS,
     ...data,
     vat_rate: Number(data.vat_rate ?? DEFAULT_BILLING_SETTINGS.vat_rate),
     migrated: true,
     vatReady,
+    suspendReady,
   };
 }
 

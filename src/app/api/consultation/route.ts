@@ -1,6 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { createServiceClient } from "@/lib/supabase/server";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { notifyNewEnquiry } from "@/lib/email/new-enquiry";
 
 export async function POST(req: NextRequest) {
   try {
@@ -28,7 +29,7 @@ export async function POST(req: NextRequest) {
 
     const supabase = await createServiceClient();
 
-    const { error } = await supabase
+    const { data: saved, error } = await supabase
       .schema("public")
       .from("edoscentre_consultation_bookings")
       .insert({
@@ -45,12 +46,31 @@ export async function POST(req: NextRequest) {
         utm_source:      body.utm_source   || null,
         utm_medium:      body.utm_medium   || null,
         utm_campaign:    body.utm_campaign || null,
-      });
+      })
+      .select("id")
+      .single();
 
     if (error) {
       console.error("[consultation-route] db error:", error.message);
       return NextResponse.json({ error: "Failed to submit. Please try again." }, { status: 500 });
     }
+
+    after(() =>
+      notifyNewEnquiry({
+        kind: "consultation",
+        id: saved?.id ?? null,
+        name: String(full_name).trim(),
+        email: String(email).toLowerCase().trim(),
+        phone: phone || null,
+        organization: organization || null,
+        roleTitle: role_title || null,
+        message: project_summary || null,
+        budget: budget_range || null,
+        preferredDate: preferred_date || null,
+        preferredTime: preferred_time || null,
+        sourcePage: source_page || req.headers.get("referer") || null,
+      }),
+    );
 
     return NextResponse.json({ success: true });
   } catch (err) {

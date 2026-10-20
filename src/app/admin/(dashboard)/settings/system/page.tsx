@@ -2,6 +2,9 @@ import { AlertTriangle, CheckCircle2 } from "lucide-react";
 import { Card, CardBody, CardHeader } from "@/components/admin/ui/Card";
 import { getBillingSettings } from "@/lib/admin/billing-settings";
 import { createServiceClient } from "@/lib/supabase/server";
+import { getAdminUser } from "@/lib/admin/auth";
+import { edosContacts } from "@/lib/email/edos-email";
+import TestEmailButtons from "@/components/admin/settings/TestEmailButtons";
 
 export const metadata = { title: "System status — Settings — EDOS Control Centre" };
 export const dynamic = "force-dynamic";
@@ -33,7 +36,7 @@ export default async function SystemStatusPage() {
   const supabase = await createServiceClient();
   const weekAgo = new Date(Date.now() - 7 * 86_400_000).toISOString();
 
-  const [billing, lastRun, failures, support] = await Promise.all([
+  const [billing, lastRun, failures, support, admin, contacts] = await Promise.all([
     getBillingSettings(),
     supabase
       .from("edoscentreadmin_audit_logs")
@@ -48,6 +51,8 @@ export default async function SystemStatusPage() {
       .eq("status", "failed")
       .gte("created_at", weekAgo),
     supabase.from("edoscentreadmin_support_tickets").select("id", { count: "exact", head: true }),
+    getAdminUser(),
+    edosContacts(),
   ]);
 
   const mpesaKeys = ["MPESA_CONSUMER_KEY", "MPESA_CONSUMER_SECRET", "MPESA_SHORTCODE", "MPESA_PASSKEY", "MPESA_CALLBACK_URL"];
@@ -65,6 +70,11 @@ export default async function SystemStatusPage() {
             set("RESEND_API_KEY") && set("RESEND_FROM_EMAIL")
               ? `Sending from ${process.env.RESEND_FROM_EMAIL}. The domain must be verified in Resend.`
               : "Set RESEND_API_KEY and RESEND_FROM_EMAIL in Vercel. Until then no client or admin email is sent.",
+        },
+        {
+          label: "Where enquiries and alerts go",
+          ok: true,
+          detail: `${contacts.inbox} — contact-form messages, consultation bookings and support alerts. Change it under Business details.`,
         },
         {
           label: "Failed billing emails, last 7 days",
@@ -122,6 +132,16 @@ export default async function SystemStatusPage() {
   ];
 
   return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <h2 className="font-semibold text-slate-900">Check that email arrives</h2>
+          <p className="text-sm text-slate-500">Sends a real email through the same path as enquiries and support alerts.</p>
+        </CardHeader>
+        <CardBody>
+          <TestEmailButtons inbox={contacts.inbox} me={admin?.email ?? contacts.inbox} />
+        </CardBody>
+      </Card>
     <div className="grid gap-6 lg:grid-cols-2">
       {groups.map((g) => (
         <Card key={g.title}>
@@ -147,6 +167,7 @@ export default async function SystemStatusPage() {
           </CardBody>
         </Card>
       ))}
+    </div>
     </div>
   );
 }

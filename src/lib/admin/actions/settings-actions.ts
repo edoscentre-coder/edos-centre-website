@@ -6,6 +6,8 @@ import { requireAdmin } from "@/lib/admin/auth";
 import { logAudit } from "@/lib/admin/audit";
 import { createServiceClient } from "@/lib/supabase/server";
 import { getBillingSettings } from "@/lib/admin/billing-settings";
+import { edosContacts, sendEdosEmail } from "@/lib/email/edos-email";
+import { absoluteUrl } from "@/lib/seo";
 
 /**
  * Settings → My account and Business details. Errors come back as values, not
@@ -87,4 +89,36 @@ export async function saveBusinessDetails(formData: FormData) {
     revalidatePath("/admin/settings/business");
     revalidatePath("/", "layout");
   });
+}
+
+/**
+ * System status → "Send test email": proves a real email reaches EDOS Centre's
+ * inbox (or the signed-in admin), through the same path the enquiry and
+ * support alerts take. Returns the address it went to.
+ */
+export async function sendTestEmail(target: "inbox" | "me"): Promise<{ ok: true; to: string } | { ok: false; error: string }> {
+  try {
+    const admin = await requireAdmin();
+    const { inbox } = await edosContacts();
+    const to = target === "me" ? admin.email : inbox;
+    const sent = await sendEdosEmail({
+      to: [to],
+      subject: "Test email from the EDOS Control Centre",
+      email: {
+        headline: "This inbox receives EDOS Centre email",
+        lead: `${admin.full_name || admin.email} sent this test from Settings → System status. If you are reading it, website enquiries and support alerts sent to ${to} will arrive here too.`,
+        rows: [
+          ["Sent to", to],
+          ["Sent at", new Date().toLocaleString("en-GB", { timeZone: "Africa/Nairobi" }) + " (Nairobi)"],
+        ],
+        cta: "Open the admin",
+        url: absoluteUrl("/admin/settings/system"),
+      },
+    });
+    await logAudit({ actorId: admin.id, action: "test_email_sent", metadata: { to, sent: sent.sent, reason: sent.reason ?? null } });
+    return sent.sent ? { ok: true, to } : { ok: false, error: sent.reason ?? "The email was not sent." };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Something went wrong.";
+    return { ok: false, error: message === "UNAUTHORIZED" ? "Your session has ended — sign in again." : message };
+  }
 }

@@ -1,9 +1,8 @@
 import "server-only";
-import { Resend } from "resend";
 import { createServiceClient } from "@/lib/supabase/server";
 import { absoluteUrl } from "@/lib/seo";
-import { getSiteSettings } from "@/lib/queries";
 import { getBillingSettings } from "@/lib/admin/billing-settings";
+import { edosContacts, sendEdosEmail, superAdmins } from "@/lib/email/edos-email";
 
 /**
  * The support desk (migration 029): clients raise requests from the portal,
@@ -190,67 +189,6 @@ export async function updateTicket(id: string, patch: { status?: Status; priorit
 
 // ── Telling people ──────────────────────────────────────────────────────────
 
-const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-
-/** The EDOS email shell, as the billing emails use it: logo, headline, lead, the message quoted, one button. */
-function supportEmailHtml(o: { headline: string; lead: string; quote?: string; rows: [string, string][]; cta: string; url: string; footer: string }) {
-  const rows = o.rows
-    .map(
-      ([k, v], i) =>
-        `<tr><td style="padding:8px 16px 8px 0;font-size:14px;color:#5b625d;white-space:nowrap;vertical-align:top;${i ? "border-top:1px solid #e2e6e2;" : ""}">${esc(k)}</td><td style="padding:8px 0;font-size:14px;text-align:right;font-weight:700;${i ? "border-top:1px solid #e2e6e2;" : ""}">${esc(v)}</td></tr>`,
-    )
-    .join("");
-  const quote = o.quote
-    ? `<div style="margin:18px 0 0;padding:14px 16px;background:#f4f6f4;border-left:3px solid #0b7a44;border-radius:6px;font-size:14px;line-height:1.6;color:#171a19;white-space:pre-wrap;">${esc(o.quote)}</div>`
-    : "";
-  return `<!doctype html>
-<html lang="en">
-  <body style="margin:0;padding:24px;background:#f4f6f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#171a19;">
-    <table role="presentation" cellpadding="0" cellspacing="0" style="max-width:540px;margin:0 auto;background:#ffffff;border-radius:12px;border:1px solid #e2e6e2;">
-      <tr><td style="padding:26px 28px 6px;">
-        <img src="${esc(absoluteUrl("/EDOS-LOGOty-1.png"))}" alt="EDOS Centre" height="40" style="display:block;height:40px;width:auto;border:0;" />
-        <h1 style="margin:18px 0 0;font-size:22px;line-height:1.3;color:#171a19;">${esc(o.headline)}</h1>
-      </td></tr>
-      <tr><td style="padding:10px 28px 4px;">
-        <p style="margin:0;font-size:15px;line-height:1.6;">${esc(o.lead)}</p>
-        ${quote}
-        <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin:18px 0 0;border-top:1px solid #e2e6e2;">${rows}</table>
-        <p style="margin:22px 0 0;">
-          <a href="${esc(o.url)}" style="display:inline-block;background:#0b7a44;color:#ffffff;text-decoration:none;font-weight:700;font-size:15px;padding:12px 20px;border-radius:8px;">${esc(o.cta)}</a>
-        </p>
-      </td></tr>
-      <tr><td style="padding:18px 28px 26px;">
-        <p style="margin:0;font-size:12px;line-height:1.6;color:#5b625d;border-top:1px solid #e2e6e2;padding-top:14px;">${esc(o.footer)}</p>
-      </td></tr>
-    </table>
-  </body>
-</html>`;
-}
-
-async function send(to: string[], subject: string, html: string, text: string, replyTo?: string | null) {
-  const apiKey = process.env.RESEND_API_KEY;
-  const from = process.env.RESEND_FROM_EMAIL;
-  if (!apiKey || !from || !to.length) return;
-  try {
-    const { error } = await new Resend(apiKey).emails.send({
-      from: `Edos Centre <${from}>`,
-      to,
-      subject,
-      html,
-      text,
-      ...(replyTo ? { replyTo } : {}),
-    });
-    if (error) console.error("[support] email failed:", error.message);
-  } catch (err) {
-    console.error("[support] email failed:", err);
-  }
-}
-
-async function footer() {
-  const site = await getSiteSettings();
-  return `EDOS Centre · ${site.contact_email || "info@edoscentre.co.ke"} · ${site.contact_phone || "+254 721 201 287"}`;
-}
-
 /** The client's people: every active portal user of that client, or the client's own email when none. */
 async function clientRecipients(clientId: string, fallback: string | null): Promise<string[]> {
   const supabase = await createServiceClient();
@@ -263,16 +201,14 @@ async function clientRecipients(clientId: string, fallback: string | null): Prom
   return emails.length ? emails : fallback ? [fallback] : [];
 }
 
-async function superAdmins(): Promise<{ id: string; email: string }[]> {
-  const supabase = await createServiceClient();
-  const { data } = await supabase.from("edoscentreadmin_admin_users").select("id, email").eq("role", "super_admin").eq("is_active", true);
-  return data ?? [];
-}
-
-/** Admins: a bell notification each, and an email. Best-effort — never stops the request being saved. */
+/**
+ * EDOS Centre: a bell notification for each super admin, and an email to them
+ * and to EDOS Centre's inbox (Settings → Business details). Best-effort —
+ * never stops the request being saved.
+ */
 export async function tellAdmins(t: Ticket, kind: "new" | "client_reply", body: string, messageId: string) {
   try {
-    const admins = await superAdmins();
+    const [admins, { inbox }] = await Promise.all([superAdmins(), edosContacts()]);
     const supabase = await createServiceClient();
     const title = kind === "new" ? `New support request — ${t.ticket_number}` : `Client replied — ${t.ticket_number}`;
     const client = t.edoscentreadmin_clients?.company_name ?? "A client";
@@ -290,23 +226,25 @@ export async function tellAdmins(t: Ticket, kind: "new" | "client_reply", body: 
         { onConflict: "recipient_id,dedup_key", ignoreDuplicates: true },
       );
     }
-    const url = absoluteUrl(`/admin/support/${t.id}`);
-    const f = await footer();
-    const rows: [string, string][] = [
-      ["Request", t.ticket_number],
-      ["Client", client],
-      ...(t.edoscentreadmin_websites?.name ? [["Website", t.edoscentreadmin_websites.name] as [string, string]] : []),
-      ["Category", CATEGORIES[t.category]],
-      ["Priority", PRIORITIES[t.priority]],
-    ];
-    const lead = kind === "new" ? `${client} opened a support request: “${t.subject}”.` : `${client} replied on “${t.subject}”.`;
-    await send(
-      admins.map((a) => a.email),
-      `${title}: ${t.subject}`,
-      supportEmailHtml({ headline: title, lead, quote: body, rows, cta: "Open in the admin", url, footer: f }),
-      [title, "", lead, "", body, "", ...rows.map(([k, v]) => `${k}: ${v}`), "", `Open: ${url}`].join("\n"),
-      t.edoscentreadmin_clients?.email,
-    );
+    await sendEdosEmail({
+      to: [inbox, ...admins.map((a) => a.email)],
+      subject: `${title}: ${t.subject}`,
+      replyTo: t.edoscentreadmin_clients?.email,
+      email: {
+        headline: title,
+        lead: kind === "new" ? `${client} opened a support request: “${t.subject}”.` : `${client} replied on “${t.subject}”.`,
+        quote: body,
+        rows: [
+          ["Request", t.ticket_number],
+          ["Client", client],
+          ...(t.edoscentreadmin_websites?.name ? [["Website", t.edoscentreadmin_websites.name] as [string, string]] : []),
+          ["Category", CATEGORIES[t.category]],
+          ["Priority", PRIORITIES[t.priority]],
+        ],
+        cta: "Open in the admin",
+        url: absoluteUrl(`/admin/support/${t.id}`),
+      },
+    });
   } catch (err) {
     console.error("[support] admin notice failed:", err);
   }
@@ -317,26 +255,28 @@ export async function tellClient(t: Ticket, kind: "reply" | "resolved", body: st
   try {
     const to = await clientRecipients(t.client_id, t.edoscentreadmin_clients?.email ?? null);
     if (!to.length) return;
-    const billing = await getBillingSettings();
-    const url = absoluteUrl(`/portal/support/${t.id}`);
-    const f = await footer();
+    const [billing, { inbox }] = await Promise.all([getBillingSettings(), edosContacts()]);
     const headline = kind === "reply" ? `New reply on ${t.ticket_number}` : `${t.ticket_number} is resolved`;
-    const lead =
-      kind === "reply"
-        ? `EDOS Centre has replied to your request “${t.subject}”.`
-        : `We've marked your request “${t.subject}” as resolved. If anything still isn't right, reply in the portal and it opens again.`;
-    const rows: [string, string][] = [
-      ["Request", t.ticket_number],
-      ...(t.edoscentreadmin_websites?.name ? [["Website", t.edoscentreadmin_websites.name] as [string, string]] : []),
-      ["Status", kind === "resolved" ? "Resolved" : "Waiting for you"],
-    ];
-    await send(
+    await sendEdosEmail({
       to,
-      `${headline} — ${t.subject}`,
-      supportEmailHtml({ headline, lead, quote: body ?? undefined, rows, cta: "View in the client portal", url, footer: f }),
-      [headline, "", lead, ...(body ? ["", body] : []), "", ...rows.map(([k, v]) => `${k}: ${v}`), "", `View: ${url}`, "", f].join("\n"),
-      billing.reply_to_email,
-    );
+      subject: `${headline} — ${t.subject}`,
+      replyTo: billing.reply_to_email || inbox,
+      email: {
+        headline,
+        lead:
+          kind === "reply"
+            ? `EDOS Centre has replied to your request “${t.subject}”.`
+            : `We've marked your request “${t.subject}” as resolved. If anything still isn't right, reply in the portal and it opens again.`,
+        quote: body ?? undefined,
+        rows: [
+          ["Request", t.ticket_number],
+          ...(t.edoscentreadmin_websites?.name ? [["Website", t.edoscentreadmin_websites.name] as [string, string]] : []),
+          ["Status", kind === "resolved" ? "Resolved" : "Waiting for you"],
+        ],
+        cta: "View in the client portal",
+        url: absoluteUrl(`/portal/support/${t.id}`),
+      },
+    });
   } catch (err) {
     console.error("[support] client notice failed:", err);
   }
